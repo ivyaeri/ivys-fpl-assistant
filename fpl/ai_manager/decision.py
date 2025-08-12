@@ -10,59 +10,77 @@ from fpl.ai_manager.persist_db import save_state, append_gw_log
 # ---------- utils ----------
 def _json_from_text(s: str) -> dict:
     m = re.search(r"\{.*\}", s, re.S)
-    if not m: return {}
-    try: return json.loads(m.group(0))
-    except Exception: return {}
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return {}
 
 def _validate_initial(players_df: pd.DataFrame, ids: list[int], budget: float = 100.0) -> tuple[bool,str]:
-    if not isinstance(ids, list) or len(ids) != 15: return False, "Need 15 ids."
+    if not isinstance(ids, list) or len(ids) != 15:
+        return False, "Need 15 ids."
     ids = [int(x) for x in ids]
-    if len(set(ids)) != 15: return False, "Duplicate ids."
+    if len(set(ids)) != 15:
+        return False, "Duplicate ids."
     sub = players_df[players_df["id"].isin(ids)].copy()
-    if len(sub) != 15: return False, "Unknown ids."
+    if len(sub) != 15:
+        return False, "Unknown ids."
 
     shape = sub["pos"].value_counts().to_dict()
     for p, need in SQUAD_SHAPE.items():
-        if shape.get(p,0) != need: return False, f"Wrong shape: {shape}."
+        if shape.get(p, 0) != need:
+            return False, f"Wrong shape: {shape}."
 
-    if float(sub["price"].sum()) > budget + 1e-6: return False, "Over budget."
-    if sub["team_short"].value_counts().max() > MAX_PER_CLUB: return False, "Exceeds 3/club."
+    if float(sub["price"].sum()) > budget + 1e-6:
+        return False, "Over budget."
+    if sub["team_short"].value_counts().max() > MAX_PER_CLUB:
+        return False, "Exceeds 3/club."
     return True, ""
 
 def _validate_lineup(players_df: pd.DataFrame, squad_ids: list[int], xi_ids: list[int], bench_order: list[int]) -> tuple[bool,str]:
     all_ids = set(squad_ids)
     xi = list(map(int, xi_ids or []))
     bench = list(map(int, bench_order or []))
-    if len(xi) != 11: return False, "XI must have 11 ids."
-    if len(bench) != 4: return False, "Bench must have 4 ids."
-    if set(xi) & set(bench): return False, "XI and bench overlap."
-    if set(xi) | set(bench) != all_ids: return False, "XI+bench must cover all 15."
+    if len(xi) != 11:
+        return False, "XI must have 11 ids."
+    if len(bench) != 4:
+        return False, "Bench must have 4 ids."
+    if set(xi) & set(bench):
+        return False, "XI and bench overlap."
+    if set(xi) | set(bench) != all_ids:
+        return False, "XI+bench must cover all 15."
 
     sub = players_df[players_df["id"].isin(xi)]
     counts = sub["pos"].value_counts().to_dict()
-    defc, midc, fwdc = counts.get("DEF",0), counts.get("MID",0), counts.get("FWD",0)
+    defc, midc, fwdc = counts.get("DEF", 0), counts.get("MID", 0), counts.get("FWD", 0)
     if (defc, midc, fwdc) not in VALID_FORMATIONS:
-        return False, f"Invalid formation DEF-MID-FWD: {(defc,midc,fwdc)}."
-    if counts.get("GK",0) != 1: return False, "XI must have exactly 1 GK."
+        return False, f"Invalid formation DEF-MID-FWD: {(defc, midc, fwdc)}."
+    if counts.get("GK", 0) != 1:
+        return False, "XI must have exactly 1 GK."
     return True, ""
 
-def _validate_transfer(players_df: pd.DataFrame, squad_ids: list[int], bank: float, out_id: int | None, in_id: int | None) -> tuple[bool,str,float,list[int]]:
+def _validate_transfer(players_df: pd.DataFrame, squad_ids: list[int], bank: float,
+                       out_id: int | None, in_id: int | None) -> tuple[bool,str,float,list[int]]:
     if out_id is None and in_id is None:
         return True, "Hold.", bank, squad_ids
     if out_id is None or in_id is None:
         return False, "Missing ids.", bank, squad_ids
 
     out_id, in_id = int(out_id), int(in_id)
-    if out_id not in squad_ids: return False, "Out id not in squad.", bank, squad_ids
-    if in_id in squad_ids: return False, "In id already in squad.", bank, squad_ids
+    if out_id not in squad_ids:
+        return False, "Out id not in squad.", bank, squad_ids
+    if in_id in squad_ids:
+        return False, "In id already in squad.", bank, squad_ids
 
-    out = players_df.loc[players_df["id"]==out_id]
-    inn = players_df.loc[players_df["id"]==in_id]
-    if out.empty or inn.empty: return False, "Unknown id(s).", bank, squad_ids
+    out = players_df.loc[players_df["id"] == out_id]
+    inn = players_df.loc[players_df["id"] == in_id]
+    if out.empty or inn.empty:
+        return False, "Unknown id(s).", bank, squad_ids
     if out.iloc[0]["pos"] != inn.iloc[0]["pos"]:
         return False, "Must be like-for-like.", bank, squad_ids
 
-    tmp = players_df[players_df["id"].isin([sid for sid in squad_ids if sid!=out_id] + [in_id])]
+    tmp = players_df[players_df["id"].isin([sid for sid in squad_ids if sid != out_id] + [in_id])]
     if tmp["team_short"].value_counts().max() > MAX_PER_CLUB:
         return False, "Would exceed 3/club.", bank, squad_ids
 
@@ -89,7 +107,7 @@ def _compute_points(xi_ids: list[int], cap_id: int, bench_ids: list[int], gw: in
     cap_pts = _event_points(int(cap_id), gw) if cap_id else 0
     total = xi_pts + cap_pts
     if chip == "TC":
-        total += cap_pts
+        total += cap_pts  # triple captain adds +1x captain points (since we already counted him twice)
     if chip == "BB":
         total += sum(_event_points(int(pid), gw) for pid in bench_ids)
     return int(total)
@@ -130,19 +148,20 @@ def weekly_decision(
     state: dict,
     model_name: str,
     gw: int,
-    extra_instructions: str | None = None,   # NEW
+    extra_instructions: str | None = None,   # optional manager note for this run
 ) -> dict:
     if not st.session_state.openai_key:
         return {"error":"no_api"}
     llm = _llm(model_name)
     squad_ids = state["squad"]
-    sub = players_df[players_df["id"].isin(squad_ids)][["id","web_name","team_short","pos","price","status","form","points_per_game"]].sort_values(["pos","web_name"])
+    sub = players_df[players_df["id"].isin(squad_ids)][
+        ["id","web_name","team_short","pos","price","status","form","points_per_game"]
+    ].sort_values(["pos","web_name"])
     table = sub.to_string(index=False)
     chips = [k for k,v in state.get("chips",{}).items() if v] or ["NONE"]
 
     note = (extra_instructions or "").strip()
     if note:
-        # keep it short to avoid prompt bloat
         note = note[:800]
 
     sys = "You are an autonomous FPL manager. Return STRICT JSON only."
@@ -156,7 +175,7 @@ KB:
 {kb_text}
 """
     if note:
-        usr += f"\nMANAGER INSTRUCTIONS (user-provided, optional):\n{note}\n"
+        usr += f"\nMANAGER INSTRUCTIONS (user-provided):\n{note}\n"
 
     usr += """
 Choose AT MOST one transfer, and optionally one chip (TC or BB; FH/WC unsupported here).
@@ -175,25 +194,46 @@ Return JSON ONLY:
 }
 Rules: like-for-like swap; stay under budget and ≤3 per club; XI must have 1 GK and a legal FPL formation; bench has remaining 4 players.
 """
-
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     return _json_from_text(raw) or {"error":"parse"}
 
 # ---------- orchestration ----------
-def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text: str, model_name: str, budget: float = 100.0):
+def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text: str,
+                                 model_name: str, budget: float = 100.0):
     """If no squad, ask LLM to draft one. No greedy fallback."""
     if "auto_mgr" in st.session_state and st.session_state.auto_mgr.get("squad"):
         return
     obj = draft_initial_squad(players_df, kb_text, model_name, budget=budget)
+
+    # error / no-api path
     if obj.get("error"):
-        st.session_state.auto_mgr = {"squad": [], "bank": budget, "free_transfers": 1, "last_gw_processed": None, "chips":{"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True}, "log": [], "seed_origin": obj["error"]}
+        st.session_state.auto_mgr = {
+            "squad": [],
+            "bank": budget,
+            "free_transfers": 1,
+            "last_gw_processed": None,
+            "last_ft_accrual_gw": 0,  # NEW: accrual guard
+            "chips": {"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True},
+            "log": [],
+            "seed_origin": obj["error"],
+        }
         save_state(user_id, st.session_state.auto_mgr)
         return
 
+    # validate draft
     ids = obj.get("squad_ids") or []
     ok, why = _validate_initial(players_df, ids, budget)
     if not ok:
-        st.session_state.auto_mgr = {"squad": [], "bank": budget, "free_transfers": 1, "last_gw_processed": None, "chips":{"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True}, "log": [], "seed_origin": f"ai_failed:{why}"}
+        st.session_state.auto_mgr = {
+            "squad": [],
+            "bank": budget,
+            "free_transfers": 1,
+            "last_gw_processed": None,
+            "last_ft_accrual_gw": 0,  # NEW
+            "chips": {"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True},
+            "log": [],
+            "seed_origin": f"ai_failed:{why}",
+        }
         save_state(user_id, st.session_state.auto_mgr)
         return
 
@@ -201,8 +241,9 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
     st.session_state.auto_mgr = {
         "squad": list(map(int, ids)),
         "bank": float(budget - cost),
-        "free_transfers": 1,
+        "free_transfers": 1,              # FPL starts with 1 FT
         "last_gw_processed": None,
+        "last_ft_accrual_gw": 0,          # NEW: no accrual performed yet
         "chips": {"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True},
         "log": [],
         "seed_origin": "ai",
@@ -210,26 +251,33 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
     }
     save_state(user_id, st.session_state.auto_mgr)
 
-def run_ai_auto_until_current(
-    user_id: str,
-    kb_meta: dict,
-    players_df: pd.DataFrame,
-    model_name: str,
-    extra_instructions: str | None = None,   # NEW (used by regenerate flow)
-):
-    """Advance from last_gw_processed+1 → current GW. LLM-only; if no API/squad, do nothing."""
-    if "auto_mgr" not in st.session_state: return
+def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFrame,
+                              model_name: str, extra_instructions: str | None = None):
+    """
+    Advance from last_gw_processed+1 → current GW.
+    FT accrual happens at the START of each GW (except GW1) and only once per GW.
+    """
+    if "auto_mgr" not in st.session_state:
+        return
     state = st.session_state.auto_mgr
     gw_now = kb_meta.get("gw")
-    if not gw_now: return
-    if not state.get("squad"): return
+    if not gw_now or not state.get("squad"):
+        return
 
     if state.get("last_gw_processed") is None:
-        state["last_gw_processed"] = gw_now - 1
+        state["last_gw_processed"] = int(gw_now) - 1
+
+    # backward compatibility for older saves
+    state.setdefault("last_ft_accrual_gw", 0)
 
     for gw in range(int(state["last_gw_processed"]) + 1, int(gw_now) + 1):
         if not st.session_state.openai_key:
             break
+
+        # ✅ ACCRUE FT AT START (not GW1) and only once per GW
+        if gw > 1 and state.get("last_ft_accrual_gw") != gw:
+            state["free_transfers"] = min(2, state["free_transfers"] + 1)
+            state["last_ft_accrual_gw"] = gw
 
         dec = weekly_decision(
             players_df,
@@ -263,20 +311,17 @@ def run_ai_auto_until_current(
         if cap_id not in xi_ids:
             break
 
-        chip = dec.get("chip","NONE")
-        if chip not in ("NONE","TC","BB"):
+        chip = dec.get("chip", "NONE")
+        if chip not in ("NONE", "TC", "BB"):
             chip = "NONE"
-        if chip in ("TC","BB") and not state["chips"].get(chip, False):
+        if chip in ("TC", "BB") and not state["chips"].get(chip, False):
             chip = "NONE"
 
         pts = _compute_points(xi_ids, cap_id, bench_order, gw, chip)
 
         used_chip = chip
-        if used_chip in ("TC","BB"):
+        if used_chip in ("TC", "BB"):
             state["chips"][used_chip] = False
-
-        # accrue FT for next week (cap 2)
-        state["free_transfers"] = min(2, state["free_transfers"] + 1)
 
         entry = {
             "gw": int(gw),
@@ -288,9 +333,9 @@ def run_ai_auto_until_current(
             "captain_id": cap_id,
             "points": int(pts),
             "bank": float(state["bank"]),
-            "free_transfers": int(state["free_transfers"]),
+            "free_transfers": int(state["free_transfers"]),  # value AFTER this GW’s decision
             "squad_ids": list(map(int, state["squad"])),
-            "reason": dec.get("reason",""),
+            "reason": dec.get("reason", ""),
         }
         state["log"].append(entry)
         state["last_gw_processed"] = gw
@@ -298,23 +343,22 @@ def run_ai_auto_until_current(
         save_state(user_id, state)
         append_gw_log(user_id, gw, entry)
 
-def rewind_and_regenerate_current_gw(
-    user_id: str,
-    kb_meta: dict,
-    players_df: pd.DataFrame,
-    model_name: str,
-    extra_instructions: str | None = None,   # NEW
-):
+def rewind_and_regenerate_current_gw(user_id: str, kb_meta: dict, players_df: pd.DataFrame,
+                                     model_name: str, extra_instructions: str | None = None):
     """Set pointer back one and re-run a single GW (current), with optional user note."""
-    if "auto_mgr" not in st.session_state: return False, "No state."
+    if "auto_mgr" not in st.session_state:
+        return False, "No state."
     state = st.session_state.auto_mgr
     gw_now = kb_meta.get("gw")
-    if not gw_now: return False, "No current GW."
-    if not state.get("squad"): return False, "No squad."
+    if not gw_now:
+        return False, "No current GW."
+    if not state.get("squad"):
+        return False, "No squad."
 
-    # remove in-memory log for gw_now; DB history remains immutable
-    state["log"] = [e for e in state["log"] if int(e.get("gw",-1)) != int(gw_now)]
+    # Remove in-memory log for gw_now (DB history is immutable)
+    state["log"] = [e for e in state["log"] if int(e.get("gw", -1)) != int(gw_now)]
     state["last_gw_processed"] = int(gw_now) - 1
+    # DO NOT touch 'last_ft_accrual_gw' — guard prevents double accrual
     save_state(user_id, state)
 
     run_ai_auto_until_current(
@@ -322,6 +366,6 @@ def rewind_and_regenerate_current_gw(
         kb_meta=kb_meta,
         players_df=players_df,
         model_name=model_name,
-        extra_instructions=extra_instructions,  # pass the custom prompt
+        extra_instructions=extra_instructions,
     )
     return True, "Regenerated."
