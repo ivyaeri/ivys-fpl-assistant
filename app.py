@@ -6,8 +6,11 @@ import pandas as pd
 from config import TZ, MODEL_NAME
 from fpl.kb import build_full_kb
 from fpl.api import fetch_bootstrap, fetch_fixtures, fetch_player_history
-from fpl.ai_manager.core import ensure_auto_state
-from fpl.ai_manager.decision import run_ai_auto_until_current
+from fpl.ai_manager.core import ensure_auto_state  # still available (fallbacks use it)
+from fpl.ai_manager.decision import (
+    run_ai_auto_until_current,
+    ensure_initial_squad_with_ai,  # NEW: AI-drafted GW1 squad
+)
 from fpl.ai_manager.persist import (
     load_manager_state, save_manager_state, maybe_git_commit_and_push
 )
@@ -60,13 +63,19 @@ else:
 
 st.caption(kb_meta["header"])
 
-# ---- Load persistent AI manager state (or seed template)
+# ---- Load persistent AI manager state or AI-seed GW1 if none
 persisted = load_manager_state()
 if persisted is not None:
-    st.session_state.auto_mgr = persisted  # restore full season state
+    st.session_state.auto_mgr = persisted
 else:
-    teams_df_seed = pd.DataFrame(fetch_bootstrap().get("teams", []))
-    ensure_auto_state(players_df, teams_df_seed)
+    # NEW: ask the AI to draft a legal 15 if you have no squad yet
+    ensure_initial_squad_with_ai(
+        players_df=players_df,
+        kb_text=st.session_state.full_kb,
+        api_key=st.session_state.openai_key,
+        model_name=MODEL_NAME,
+        budget=100.0,
+    )
 
 # ---- Run AI manager to current GW (idempotent), then persist + maybe git push
 run_ai_auto_until_current(
@@ -96,6 +105,6 @@ with tab4:
 with tab5:
     render_chat_tab(model_name=MODEL_NAME, kb_text=st.session_state.full_kb, kb_hash=st.session_state.kb_hash)
 with tab6:
-    render_ai_tabs.render_auto_baseline(players_df, kb_meta)   # quick baseline view
+    render_ai_tabs.render_auto_baseline(players_df, kb_meta)   # baseline (greedy XI) view
 with tab7:
-    render_ai_tabs.render_ai_weekly(players_df, kb_meta)       # full weekly AI log view
+    render_ai_tabs.render_ai_weekly(players_df, kb_meta)       # LLM decisions + regenerate button
