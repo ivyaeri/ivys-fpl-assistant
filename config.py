@@ -12,4 +12,4 @@ MODEL_NAME = os.getenv("FPL_LLM_MODEL", "gpt-5-mini")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/fpl.db")
 
 # Season label (key in DB rows)
-SEASON = os.getenv("FPL_SEASON", "2024-25")
+SEASON = os.getenv("FPL_SEASON", "2025-26")
