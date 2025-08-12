@@ -4,3 +4,4 @@ pytz
 requests
 langchain-openai>=0.1.6
 gitpython>=3.1
+langchain
