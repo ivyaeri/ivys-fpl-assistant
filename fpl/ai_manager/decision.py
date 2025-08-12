@@ -369,3 +369,22 @@ def rewind_and_regenerate_current_gw(user_id: str, kb_meta: dict, players_df: pd
         extra_instructions=extra_instructions,
     )
     return True, "Regenerated."
+def refresh_logged_points(user_id: str) -> int:
+    """Recompute points for all logged GWs from official FPL history."""
+    if "auto_mgr" not in st.session_state:
+        return 0
+    state = st.session_state.auto_mgr
+    updated = 0
+    for entry in state.get("log", []):
+        gw = int(entry["gw"])
+        xi_ids = list(map(int, entry.get("xi_ids", [])))
+        bench_ids = list(map(int, entry.get("bench_ids") or entry.get("bench_order") or []))
+        cap_id = int(entry.get("captain_id") or 0)
+        chip = entry.get("chip", "NONE")
+        new_pts = _compute_points(xi_ids, cap_id, bench_ids, gw, chip)
+        if new_pts != entry.get("points"):
+            entry["points"] = int(new_pts)
+            append_gw_log(user_id, gw, entry)  # upsert same PK (user_id, season, gw)
+            updated += 1
+    save_state(user_id, state)
+    return updated
