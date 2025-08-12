@@ -7,7 +7,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from sqlalchemy.sql import func
 from config import DATABASE_URL, SEASON
 
-# Ensure parent directory for sqlite file exists (e.g., data/fpl.db)
+# Ensure parent directory for sqlite file exists (if using SQLite locally)
 if DATABASE_URL.startswith("sqlite:///"):
     path = DATABASE_URL.replace("sqlite:///", "", 1)
     if path not in (":memory:", ""):
@@ -15,7 +15,14 @@ if DATABASE_URL.startswith("sqlite:///"):
         if parent:
             pathlib.Path(parent).mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(DATABASE_URL, future=True)
+# ✅ Neon-friendly engine: small pool + pre_ping
+engine = create_engine(
+    DATABASE_URL,
+    future=True,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=0,
+)
 
 class Base(DeclarativeBase): pass
 
