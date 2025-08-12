@@ -125,7 +125,7 @@ def draft_initial_squad(players_df: pd.DataFrame, kb_text: str, model_name: str,
     usr = f"""
 Budget £{budget:.1f}m. Shape exactly: GK=2, DEF=5, MID=5, FWD=3. Max 3 per club.
 Use this player table + knowledge base. Keep in mind the metrics like form, selected_by, points before making a choice. Rationalize having a player in the team before making final decision.
-
+Highly consider the ownership of the players in your choice
 PLAYERS:
 {table}
 
@@ -210,7 +210,7 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
         st.session_state.auto_mgr = {
             "squad": [],
             "bank": budget,
-            "free_transfers": 1,
+            "free_transfers": 0,
             "last_gw_processed": None,
             "last_ft_accrual_gw": 0,  # NEW: accrual guard
             "chips": {"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True},
@@ -227,7 +227,7 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
         st.session_state.auto_mgr = {
             "squad": [],
             "bank": budget,
-            "free_transfers": 1,
+            "free_transfers": 0,
             "last_gw_processed": None,
             "last_ft_accrual_gw": 0,  # NEW
             "chips": {"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True},
@@ -241,7 +241,7 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
     st.session_state.auto_mgr = {
         "squad": list(map(int, ids)),
         "bank": float(budget - cost),
-        "free_transfers": 1,              # FPL starts with 1 FT
+        "free_transfers": 0,              # FPL starts with 1 FT
         "last_gw_processed": None,
         "last_ft_accrual_gw": 0,          # NEW: no accrual performed yet
         "chips": {"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True},
@@ -276,7 +276,7 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
 
         # ✅ ACCRUE FT AT START (not GW1) and only once per GW
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
-            state["free_transfers"] = min(2, state["free_transfers"] + 1)
+            state["free_transfers"] = min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
 
         dec = weekly_decision(
