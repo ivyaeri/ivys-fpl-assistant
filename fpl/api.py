@@ -3,6 +3,7 @@ import requests
 from functools import lru_cache
 
 FPL_API = "https://fantasy.premierleague.com/api"
+REQ_TIMEOUT = 10  # seconds
 
 @lru_cache(maxsize=8)
 def fetch_bootstrap():
