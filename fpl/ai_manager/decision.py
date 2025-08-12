@@ -5,7 +5,7 @@ from fpl.ai_manager.core import (
     build_scored_market,
     pick_starting_xi,
     simulate_week_points,
-    ensure_auto_state,  # used as fallback when AI draft fails
+    ensure_auto_state,  # fallback only if you ever want a greedy seed elsewhere
 )
 
 # ------------ helpers ------------
@@ -89,6 +89,11 @@ def run_ai_auto_until_current(kb_meta: dict, players_df: pd.DataFrame, teams_df:
     state = st.session_state.auto_mgr
     gw_now = kb_meta.get("gw")
     if not gw_now: return
+
+    # NEW: if no squad yet (e.g., no API at GW1), do nothing — no fake 'hold' logs
+    if not state.get("squad"):
+        return
+
     if state["last_gw_processed"] is None:
         state["last_gw_processed"] = gw_now - 1
 
@@ -102,7 +107,8 @@ def run_ai_auto_until_current(kb_meta: dict, players_df: pd.DataFrame, teams_df:
         if api_key:
             ai_dec = decide_with_ai(state, market, kb_meta.get("header","") + "\n\n" + st.session_state.full_kb, api_key, model_name, gw)
         else:
-            ai_dec = {"chip":"NONE","made":False,"out_id":None,"in_id":None,"captain_id":None,"reason":"No API key; hold."}
+            # No decision without API; skip entirely (no log entry)
+            break
 
         chip = ai_dec.get("chip","NONE")
         if chip in ("TC","BB") and not state["chips"].get(chip, False):
@@ -149,7 +155,7 @@ def run_ai_auto_until_current(kb_meta: dict, players_df: pd.DataFrame, teams_df:
 
         state["last_gw_processed"] = gw
 
-# ------------ NEW: AI initial (GW1) squad draft ------------
+# ------------ AI initial (GW1) squad draft ------------
 def _validate_initial(ids: list[int], players_df: pd.DataFrame, budget: float = 100.0) -> tuple[bool, str]:
     if not isinstance(ids, list) or len(ids) != 15:
         return False, "Need exactly 15 ids."
@@ -172,14 +178,25 @@ def _validate_initial(ids: list[int], players_df: pd.DataFrame, budget: float = 
     return True, ""
 
 def ensure_initial_squad_with_ai(players_df: pd.DataFrame, kb_text: str, api_key: str, model_name: str, budget: float = 100.0):
-    """If there's no squad, ask the LLM to draft a full 15. On failure/no key, fallback to greedy."""
+    """
+    If there's no squad yet:
+      - with API key: ask the LLM to draft a legal 15 (validated).
+      - without API key: DO NOT seed; leave empty so GW1 shows no current squad/logs.
+    """
     if "auto_mgr" in st.session_state and st.session_state.auto_mgr.get("squad"):
         return
 
-    # No API? fall back to greedy
+    # No API? create an empty state (no squad yet)
     if not api_key:
-        ensure_auto_state(players_df, None)
-        st.session_state.auto_mgr["seed_origin"] = "greedy_no_api"
+        st.session_state.auto_mgr = {
+            "squad": [],
+            "bank": float(budget),
+            "free_transfers": 1,
+            "last_gw_processed": None,
+            "chips": {"TC": True, "BB": True, "FH": True, "WC1": True, "WC2": True},
+            "log": [],
+            "seed_origin": "none",
+        }
         return
 
     llm = ChatOpenAI(openai_api_key=api_key, model_name=model_name, temperature=0.1)
@@ -208,8 +225,16 @@ Return JSON ONLY:
 
     ok, why = _validate_initial(squad_ids, players_df, budget=budget)
     if not ok:
-        ensure_auto_state(players_df, None)
-        st.session_state.auto_mgr["seed_origin"] = f"greedy_fallback ({why or 'parse_failed'})"
+        # leave empty; user can try again after tweaking API/model, etc.
+        st.session_state.auto_mgr = {
+            "squad": [],
+            "bank": float(budget),
+            "free_transfers": 1,
+            "last_gw_processed": None,
+            "chips": {"TC": True, "BB": True, "FH": True, "WC1": True, "WC2": True},
+            "log": [],
+            "seed_origin": f"ai_failed ({why or 'parse_failed'})",
+        }
         return
 
     sub = players_df[players_df["id"].isin([int(x) for x in squad_ids])][["id","price"]].copy()
@@ -217,14 +242,14 @@ Return JSON ONLY:
         "squad": [{"id": int(r.id), "buy_price": float(r.price)} for r in sub.itertuples(index=False)],
         "bank": float(budget - sub["price"].sum()),
         "free_transfers": 1,
-        "last_gw_processed": None,   # so the runner will process GW1 next
+        "last_gw_processed": None,   # runner will process GW1 next
         "chips": {"TC": True, "BB": True, "FH": True, "WC1": True, "WC2": True},
         "log": [],
         "seed_origin": "ai",
         "seed_reason": obj.get("reason",""),
     }
 
-# ------------ NEW: Rewind & regenerate current GW ------------
+# ------------ Rewind & regenerate current GW ------------
 def rewind_and_regenerate_current_gw(kb_meta: dict, players_df: pd.DataFrame, teams_df: pd.DataFrame, fixtures: list, fetch_player_history, model_name: str):
     """Remove current GW entry (if any) and rerun AI for it."""
     if "auto_mgr" not in st.session_state:
@@ -233,6 +258,8 @@ def rewind_and_regenerate_current_gw(kb_meta: dict, players_df: pd.DataFrame, te
     gw_now = kb_meta.get("gw")
     if not gw_now:
         return False, "No current GW."
+    if not state.get("squad"):
+        return False, "No squad to regenerate."
 
     before = len(state["log"])
     state["log"] = [e for e in state["log"] if int(e.get("gw", -1)) != int(gw_now)]
