@@ -3,7 +3,6 @@ import os, hashlib
 import streamlit as st
 import pandas as pd
 
-from config import TZ, MODEL_NAME
 from fpl.kb import build_full_kb
 from fpl.api import fetch_bootstrap
 from fpl.ai_manager.persist_db import init_db, load_state, save_state
@@ -78,7 +77,7 @@ run_ai_auto_until_current(
 )
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5,tab 6 = st.tabs(
+tab1, tab2, tab3, tab4, tab5,tab6 = st.tabs(
     ["Top 20 Overall","Top 10 by Position","Top Budget Picks","Fixtures","AI Auto Manager", "Chat Assistant"]
 )
 with tab1: render_top20(players_df)
@@ -87,3 +86,5 @@ with tab3: render_budget(players_df)
 with tab4: render_fixtures_tab(st.session_state.fixtures_text)
 with tab5: render_ai_tab(players_df, kb_meta, user_id=st.session_state.user_id)
 with tab6: renedr_chat_tab(model_name, kb_meta,kb_hash)
+
+from config import TZ, MODEL_NAME
