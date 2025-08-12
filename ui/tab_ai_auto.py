@@ -3,9 +3,13 @@ import streamlit as st
 import pandas as pd
 
 from fpl.ai_manager.core import build_scored_market, pick_starting_xi
-from fpl.ai_manager.decision import rewind_and_regenerate_current_gw  # NEW
-from fpl.api import fetch_bootstrap, fetch_fixtures, fetch_player_history          # NEW
-from config import MODEL_NAME                                                     # NEW
+from fpl.ai_manager.decision import (
+    rewind_and_regenerate_current_gw,
+    ensure_initial_squad_with_ai,   # to draft GW1 on-demand
+)
+from fpl.ai_manager.persist import save_manager_state, maybe_git_commit_and_push
+from fpl.api import fetch_bootstrap, fetch_fixtures, fetch_player_history
+from config import MODEL_NAME
 
 class render_ai_tabs:
     @staticmethod
@@ -15,6 +19,31 @@ class render_ai_tabs:
             st.info("Auto manager not initialized.")
             return
         state = st.session_state.auto_mgr
+
+        # If no squad yet (e.g., no API at GW1), offer an on-demand AI draft
+        if not state.get("squad"):
+            col1, col2 = st.columns([1,3])
+            with col1:
+                disabled = not bool(st.session_state.openai_key)
+                if st.button("🧠 Draft GW1 Squad (AI)", disabled=disabled):
+                    ensure_initial_squad_with_ai(
+                        players_df=players_df,
+                        kb_text=st.session_state.full_kb,
+                        api_key=st.session_state.openai_key,
+                        model_name=MODEL_NAME,
+                        budget=100.0,
+                    )
+                    save_manager_state(st.session_state.auto_mgr)
+                    maybe_git_commit_and_push()
+                    st.success("Drafted (if AI succeeded). Rerun to see GW1 decisions.")
+                    st.stop()
+            with col2:
+                if not st.session_state.openai_key:
+                    st.info("Add your OpenAI API key in the sidebar, then click **Draft GW1 Squad (AI)**.")
+                else:
+                    st.info("Click **Draft GW1 Squad (AI)** to generate your initial 15.")
+            return
+
         market = build_scored_market(players_df, n_fixt=3)
         squad_ids = [s["id"] for s in state["squad"]]
         in_squad = players_df[players_df["id"].isin(squad_ids)][
@@ -50,7 +79,31 @@ class render_ai_tabs:
             return
         state = st.session_state.auto_mgr
 
-        # NEW: Regenerate this GW (AI) action
+        # If no squad yet, same call-to-action here
+        if not state.get("squad"):
+            col1, col2 = st.columns([1,3])
+            with col1:
+                disabled = not bool(st.session_state.openai_key)
+                if st.button("🧠 Draft GW1 Squad (AI)", disabled=disabled):
+                    ensure_initial_squad_with_ai(
+                        players_df=players_df,
+                        kb_text=st.session_state.full_kb,
+                        api_key=st.session_state.openai_key,
+                        model_name=MODEL_NAME,
+                        budget=100.0,
+                    )
+                    save_manager_state(st.session_state.auto_mgr)
+                    maybe_git_commit_and_push()
+                    st.success("Drafted (if AI succeeded). Rerun to see GW1 decisions.")
+                    st.stop()
+            with col2:
+                if not st.session_state.openai_key:
+                    st.info("Add your OpenAI API key in the sidebar, then click **Draft GW1 Squad (AI)**.")
+                else:
+                    st.info("Click **Draft GW1 Squad (AI)** to generate your initial 15.")
+            return
+
+        # Regenerate this GW
         col_a, col_b = st.columns([1,3])
         with col_a:
             disabled = not bool(st.session_state.openai_key)
@@ -63,17 +116,12 @@ class render_ai_tabs:
                     fetch_player_history=fetch_player_history,
                     model_name=MODEL_NAME,
                 )
-                # persist immediately if available
-                try:
-                    from fpl.ai_manager.persist import save_manager_state, maybe_git_commit_and_push
-                    save_manager_state(st.session_state.auto_mgr)
-                    maybe_git_commit_and_push()
-                except Exception:
-                    pass
+                save_manager_state(st.session_state.auto_mgr)
+                maybe_git_commit_and_push()
                 st.success(msg if ok else f"Nothing changed: {msg}")
         with col_b:
             if not st.session_state.openai_key:
-                st.info("Add your OpenAI API key in the sidebar, then click **Regenerate** to replace 'No API key; hold.' decisions for this GW.")
+                st.info("Add your OpenAI API key in the sidebar, then click **Regenerate** to replace this GW’s decision.")
 
         if not state["log"]:
             st.info("No gameweeks processed yet.")
@@ -87,7 +135,6 @@ class render_ai_tabs:
             header = [f"GW {entry['gw']}", f"Points: {entry['points']}", f"Bank £{entry['bank']:.1f}", f"FTs {entry['free_transfers']}"]
             if entry.get("chip") and entry["chip"] != "NONE": header.append(f"Chip {entry['chip']}")
             with st.expander(" — ".join(header), expanded=(entry["gw"] == kb_meta.get("gw"))):
-                # Show seed origin for GW1 if present
                 if entry["gw"] == 1 and state.get("seed_origin"):
                     extra = f" — {state.get('seed_reason','')}" if state.get('seed_reason') else ""
                     st.caption(f"Initial squad origin: **{state['seed_origin']}**{extra}")
