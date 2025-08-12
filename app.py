@@ -78,11 +78,12 @@ run_ai_auto_until_current(
 )
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Top 20 Overall","Top 10 by Position","Top Budget Picks","Fixtures","AI Auto Manager"]
+tab1, tab2, tab3, tab4, tab5,tab 6 = st.tabs(
+    ["Top 20 Overall","Top 10 by Position","Top Budget Picks","Fixtures","AI Auto Manager", "Chat Assistant"]
 )
 with tab1: render_top20(players_df)
 with tab2: render_top10_by_pos(players_df)
 with tab3: render_budget(players_df)
 with tab4: render_fixtures_tab(st.session_state.fixtures_text)
 with tab5: render_ai_tab(players_df, kb_meta, user_id=st.session_state.user_id)
+with tab6: renedr_chat_tab()
