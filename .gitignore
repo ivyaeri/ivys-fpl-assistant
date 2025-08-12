@@ -1,0 +1,7 @@
+# Keep the log tracked? Uncomment next line to IGNORE it
+# data/auto_manager_state.json
+
+__pycache__/
+*.pyc
+.env
+.streamlit/secrets.toml
