@@ -12,6 +12,8 @@ from ui.tab_fixtures import render_fixtures_tab
 from ui.tab_chat import render_chat_tab
 from ui.tab_ai_auto import render_ai_tab
 
+from config import TZ, MODEL_NAME
+
 st.set_page_config(page_title="FPL Chat Agent", page_icon="⚽", layout="wide")
 st.title("⚽ FPL Assistant")
 
@@ -87,4 +89,3 @@ with tab4: render_fixtures_tab(st.session_state.fixtures_text)
 with tab5: render_ai_tab(players_df, kb_meta, user_id=st.session_state.user_id)
 with tab6: renedr_chat_tab(MODEL_NAME, kb_meta,kb_hash)
 
-from config import TZ, MODEL_NAME
