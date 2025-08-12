@@ -35,9 +35,15 @@ with st.sidebar:
     api_key_input = st.text_input("Enter your OpenAI API key", value=st.session_state.openai_key, type="password")
     if api_key_input: st.session_state.openai_key = api_key_input.strip()
 
-    include_hist = st.checkbox("Include recent player history", value=True)
+    include_hist = st.checkbox("Include recent player history", value=False)
     last_n = st.slider("Recent GWs", 3, 8, 5, 1)
-
+    
+    auto_kick = st.checkbox(
+        "Auto-run AI at startup",
+        value=False,
+        help="Turn off if deployment times out on cold start.",
+        key="auto_kick",
+    )
     if st.button("🔄 Refresh live KB"):
         for k in ["full_kb","kb_meta","players_df","fixtures_text","kb_hash","conversation"]:
             st.session_state.pop(k, None)
@@ -59,26 +65,38 @@ else:
 
 st.caption(kb_meta["header"])
 
-# Load state from DB or let AI draft initial squad (if API present). No greedy fallback.
+# Load state from DB (don't auto-call the LLM here)
 persisted = load_state(st.session_state.user_id)
 if persisted is not None:
     st.session_state.auto_mgr = persisted
 else:
-    ensure_initial_squad_with_ai(
-        user_id=st.session_state.user_id,
-        players_df=players_df,
-        kb_text=st.session_state.full_kb,
-        model_name=MODEL_NAME,
-        budget=100.0,
-    )
+    # Keep an empty state so the UI can render; GW1 draft happens only when triggered
+    st.session_state.auto_mgr = st.session_state.get("auto_mgr", {"squad": []})
 
-# Run AI to current GW (LLM only). Persist along the way.
-run_ai_auto_until_current(
-    user_id=st.session_state.user_id,
-    kb_meta=kb_meta,
-    players_df=players_df,
-    model_name=MODEL_NAME,
-)
+# Trigger AI only when requested
+trigger_ai = st.sidebar.button("▶ Initialize/Run AI now") or st.session_state.get("auto_kick", False)
+
+if trigger_ai:
+    if not st.session_state.openai_key:
+        st.sidebar.warning("Add your OpenAI API key first.")
+    else:
+        with st.spinner("Running AI manager…"):
+            ensure_initial_squad_with_ai(
+                user_id=st.session_state.user_id,
+                players_df=players_df,
+                kb_text=st.session_state.full_kb,
+                model_name=MODEL_NAME,
+                budget=100.0,
+            )
+            run_ai_auto_until_current(
+                user_id=st.session_state.user_id,
+                kb_meta=kb_meta,
+                players_df=players_df,
+                model_name=MODEL_NAME,
+            )
+        st.sidebar.success("AI manager updated.")
+        st.rerun()
+
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
