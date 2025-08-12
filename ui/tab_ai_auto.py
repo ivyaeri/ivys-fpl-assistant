@@ -1,7 +1,11 @@
 # ui/tab_ai_auto.py
 import streamlit as st
 import pandas as pd
+
 from fpl.ai_manager.core import build_scored_market, pick_starting_xi
+from fpl.ai_manager.decision import rewind_and_regenerate_current_gw  # NEW
+from fpl.api import fetch_bootstrap, fetch_fixtures, fetch_player_history          # NEW
+from config import MODEL_NAME                                                     # NEW
 
 class render_ai_tabs:
     @staticmethod
@@ -46,6 +50,31 @@ class render_ai_tabs:
             return
         state = st.session_state.auto_mgr
 
+        # NEW: Regenerate this GW (AI) action
+        col_a, col_b = st.columns([1,3])
+        with col_a:
+            disabled = not bool(st.session_state.openai_key)
+            if st.button("🔁 Regenerate this GW (AI)", disabled=disabled):
+                ok, msg = rewind_and_regenerate_current_gw(
+                    kb_meta,
+                    players_df,
+                    teams_df=pd.DataFrame(fetch_bootstrap().get("teams", [])),
+                    fixtures=fetch_fixtures(),
+                    fetch_player_history=fetch_player_history,
+                    model_name=MODEL_NAME,
+                )
+                # persist immediately if available
+                try:
+                    from fpl.ai_manager.persist import save_manager_state, maybe_git_commit_and_push
+                    save_manager_state(st.session_state.auto_mgr)
+                    maybe_git_commit_and_push()
+                except Exception:
+                    pass
+                st.success(msg if ok else f"Nothing changed: {msg}")
+        with col_b:
+            if not st.session_state.openai_key:
+                st.info("Add your OpenAI API key in the sidebar, then click **Regenerate** to replace 'No API key; hold.' decisions for this GW.")
+
         if not state["log"]:
             st.info("No gameweeks processed yet.")
             return
@@ -58,6 +87,11 @@ class render_ai_tabs:
             header = [f"GW {entry['gw']}", f"Points: {entry['points']}", f"Bank £{entry['bank']:.1f}", f"FTs {entry['free_transfers']}"]
             if entry.get("chip") and entry["chip"] != "NONE": header.append(f"Chip {entry['chip']}")
             with st.expander(" — ".join(header), expanded=(entry["gw"] == kb_meta.get("gw"))):
+                # Show seed origin for GW1 if present
+                if entry["gw"] == 1 and state.get("seed_origin"):
+                    extra = f" — {state.get('seed_reason','')}" if state.get('seed_reason') else ""
+                    st.caption(f"Initial squad origin: **{state['seed_origin']}**{extra}")
+
                 if entry["made"] and entry["transfer"]:
                     st.markdown(f"**Transfer:** {pname(entry['transfer']['out'])} → {pname(entry['transfer']['in'])}")
                 else:
