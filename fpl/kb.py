@@ -29,25 +29,32 @@ def build_full_kb(include_history: bool = True, last_n: int = 5):
     players = pd.DataFrame(bs.get("elements", []))
     teams = pd.DataFrame(bs.get("teams", []))
 
-    team_short = teams.set_index("id")["short_name"].to_dict()
+    # after players = pd.DataFrame(bs.get("elements", []))
 
+    STATUS_LABEL = {"a":"Available","d":"Doubtful","i":"Injured","s":"Suspended","u":"Unavailable"}
+    
     players = players.copy()
     players["team_short"] = players["team"].map(team_short)
     players["price"] = players["now_cost"] / 10.0
     players["pos"] = players["element_type"].map(POS)
     players["selected_by"] = pd.to_numeric(players.get("selected_by_percent", 0), errors="coerce").fillna(0.0)
+    # NEW: expose numeric chances and a friendly status label
+    players["chance_next"] = pd.to_numeric(players.get("chance_of_playing_next_round"), errors="coerce")
+    players["chance_this"] = pd.to_numeric(players.get("chance_of_playing_this_round"), errors="coerce")
+    players["status_label"] = players["status"].map(STATUS_LABEL).fillna(players["status"])
 
-    cols = ["id","web_name","team_short","pos","price","form","selected_by","status","news","minutes","points_per_game","total_points","ict_index"]
+    cols = ["id","web_name","team_short","pos","price","form","selected_by","status","news","minutes","points_per_game","total_points","ict_index","chance_next","status_label","chance_this"]
     keep = [c for c in cols if c in players.columns]
     p_lines = []
     for _, r in players[keep].iterrows():
         pid = int(r.get("id"))
         base = (
-            f"PLAYER: {r.get('web_name')} | TEAM: {r.get('team_short')} | POS: {r.get('pos')} | "
-            f"PRICE: £{float(r.get('price', 0)):.1f}m | FORM: {r.get('form')} | OWN: {float(r.get('selected_by', 0)):.1f}% | "
-            f"PPG: {r.get('points_per_game')} | TOT: {r.get('total_points')} | MINS: {r.get('minutes')} | "
-            f"ICT: {r.get('ict_index')} | STATUS: {r.get('status')} | NEWS: {str(r.get('news') or '')[:120]}"
-        )
+        f"PLAYER: {r['web_name']} | TEAM: {r['team_short']} | POS: {r['pos']} | "
+        f"PRICE: £{float(r['price']):.1f}m | FORM: {r['form']} | OWN: {float(r['selected_by']):.1f}% | "
+        f"PPG: {r['points_per_game']} | TOT: {r['total_points']} | MINS: {r['minutes']} | ICT: {r['ict_index']} | "
+        f"STATUS: {r['status_label']} ({'' if pd.isna(r['chance_next']) else int(r['chance_next'])}% next) | "
+        f"NEWS: {str(r.get('news') or '')[:120]}"
+    )
         if include_history:
             base += " | " + _recent_block(pid, last_n=last_n)
         p_lines.append(base)
