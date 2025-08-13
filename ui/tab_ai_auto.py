@@ -37,6 +37,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                         model_name=MODEL_NAME,
                         budget=100.0,
                     )
+
                 squad_ids = (st.session_state.get("auto_mgr", {}).get("squad") or [])
                 if len(squad_ids) == 15:
                     # ✅ Immediately process the current GW so a row gets logged
@@ -48,11 +49,11 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                             model_name=MODEL_NAME,
                             extra_instructions=None,
                         )
-        st.success("Drafted and processed the current GW. See the log below.")
-        st.rerun()
-    else:
-        reason = st.session_state.get("auto_mgr", {}).get("seed_origin", "unknown")
-        st.error(f"Draft failed ({reason}). Check your API key and try again.")
+                    st.success("Drafted and processed the current GW. See the log below.")
+                    st.rerun()
+                else:
+                    reason = st.session_state.get("auto_mgr", {}).get("seed_origin", "unknown")
+                    st.error(f"Draft failed ({reason}). Check your API key and try again.")
 
         with col2:
             if not st.session_state.openai_key:
