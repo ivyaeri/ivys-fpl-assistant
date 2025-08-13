@@ -40,8 +40,25 @@ if "user_id" not in st.session_state:    st.session_state.user_id = "default"
 
 with st.sidebar:
     st.subheader("👤 User")
-    user_id = st.text_input("User ID", value=st.session_state.user_id, help="Per-user state in DB.")
-    if user_id: st.session_state.user_id = user_id.strip()
+    # text input writes to a temp key so we can control when to apply it
+    uid_val = st.text_input("User ID", value=st.session_state.user_id, key="uid_input")
+
+    def _apply_user():
+        st.session_state.user_id = (st.session_state.uid_input or "demo").strip()
+        # clear per-user in-memory state so the app reloads from DB for the new user
+        for k in ["auto_mgr"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    st.button("Use this ID", on_click=_apply_user, help="Switch active user/profile")
+
+    st.caption(f"Active user: **{st.session_state.user_id}**")
+        # now it's safe to call DB with the active user_id
+    persisted = load_state(st.session_state.user_id)
+    if persisted is not None:
+        st.session_state.auto_mgr = persisted
+    else:
+        st.session_state.auto_mgr = st.session_state.get("auto_mgr", {"squad": []})
         
     st.subheader("🔐 API & Options")
 
