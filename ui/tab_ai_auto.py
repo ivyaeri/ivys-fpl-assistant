@@ -6,6 +6,7 @@ from config import MODEL_NAME
 from fpl.ai_manager.decision import (
     ensure_initial_squad_with_ai,
     rewind_and_regenerate_current_gw,
+    run_ai_auto_until_current,  
     refresh_logged_points,   # NEW: recompute points for finished GWs
 )
 
@@ -36,18 +37,23 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                         model_name=MODEL_NAME,
                         budget=100.0,
                     )
-                # Show result immediately
                 squad_ids = (st.session_state.get("auto_mgr", {}).get("squad") or [])
                 if len(squad_ids) == 15:
-                    st.success("Drafted! Preview below — auto-refreshing…")
-                    preview = players_df[players_df["id"].isin(squad_ids)][
-                        ["web_name", "team_short", "pos", "price", "form", "status", "selected_by"]
-                    ].sort_values(["pos", "web_name"])
-                    st.dataframe(preview, use_container_width=True)
-                    st.rerun()  # kick the weekly loop + refresh UI
-                else:
-                    reason = st.session_state.get("auto_mgr", {}).get("seed_origin", "unknown")
-                    st.error(f"Draft failed ({reason}). Check your API key and try again.")
+                    # ✅ Immediately process the current GW so a row gets logged
+                    with st.spinner("Locking in GW decisions…"):
+                        run_ai_auto_until_current(
+                            user_id=user_id,
+                            kb_meta=kb_meta,
+                            players_df=players_df,
+                            model_name=MODEL_NAME,
+                            extra_instructions=None,
+                        )
+        st.success("Drafted and processed the current GW. See the log below.")
+        st.rerun()
+    else:
+        reason = st.session_state.get("auto_mgr", {}).get("seed_origin", "unknown")
+        st.error(f"Draft failed ({reason}). Check your API key and try again.")
+
         with col2:
             if not st.session_state.openai_key:
                 st.info("Add your OpenAI API key in the sidebar, then click **Draft GW1 Squad (AI)**.")
