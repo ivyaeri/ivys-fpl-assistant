@@ -21,7 +21,19 @@ st.title("⚽ FPL Assistant")
 
 # DB init
 init_db()
+# NOTE: this wrapper will cache the KB indefinitely; we’ll bust it manually.
 
+@st.cache_data(show_spinner=False)
+def get_full_kb_cached(epoch: int):
+    """
+    Cache the KB until the user explicitly refreshes.
+    The sole cache key is `epoch`, which we bump from the Refresh button.
+    We read the current toggle/slider values from session_state.
+    """
+    include_history = st.session_state.get("include_hist", False)
+    last_n = st.session_state.get("last_n", 5)
+    # uses your existing build_full_kb(...) defined below in this file
+    return build_full_kb(include_history=include_history, last_n=last_n)
 # Sidebar
 if "openai_key" not in st.session_state: st.session_state.openai_key = ""
 if "user_id" not in st.session_state:    st.session_state.user_id = "default"
@@ -30,38 +42,60 @@ with st.sidebar:
     st.subheader("👤 User")
     user_id = st.text_input("User ID", value=st.session_state.user_id, help="Per-user state in DB.")
     if user_id: st.session_state.user_id = user_id.strip()
-
+        
     st.subheader("🔐 API & Options")
-    api_key_input = st.text_input("Enter your OpenAI API key", value=st.session_state.openai_key, type="password")
-    if api_key_input: st.session_state.openai_key = api_key_input.strip()
 
-    include_hist = st.checkbox("Include recent player history", value=False)
-    last_n = st.slider("Recent GWs", 3, 8, 5, 1)
-    
-    auto_kick = st.checkbox(
-        "Auto-run AI at startup",
-        value=False,
-        help="Turn off if deployment times out on cold start.",
-        key="auto_kick",
+    # your existing API key field
+    api_key_input = st.text_input(
+        "Enter your OpenAI API key",
+        value=st.session_state.get("openai_key", ""),
+        type="password",
+        key="openai_api_key_input",
+        help="Stored only in your session.",
     )
+    if api_key_input:
+        st.session_state.openai_key = api_key_input.strip()
+
+    # ✅ Persist the knobs; they won’t apply until you click Refresh
+    include_hist = st.checkbox(
+        "Include recent player history",
+        value=st.session_state.get("include_hist", False)
+    )
+    last_n = st.slider(
+        "Recent GWs",
+        3, 8,
+        st.session_state.get("last_n", 5),
+        1
+    )
+    st.session_state.include_hist = include_hist
+    st.session_state.last_n = last_n
+
+    # ✅ Epoch to control the manual cache
+    if "kb_epoch" not in st.session_state:
+        st.session_state.kb_epoch = 0
+
+    # ✅ Refresh button: bump epoch + clear cached func + clear session copies
     if st.button("🔄 Refresh live KB"):
-        for k in ["full_kb","kb_meta","players_df","fixtures_text","kb_hash","conversation"]:
+        st.session_state.kb_epoch += 1
+        try:
+            get_full_kb_cached.clear()
+        except Exception:
+            pass
+        for k in ["full_kb", "kb_meta", "players_df", "fixtures_text", "kb_hash", "conversation"]:
             st.session_state.pop(k, None)
-    st.caption(f"API key present: {'Yes' if st.session_state.openai_key else 'No'}")
+        st.rerun()
+
+    st.caption("KB is cached until you click **Refresh live KB**. Changes above apply on next refresh.")
+    st.caption(f"API key present: {'Yes' if st.session_state.get('openai_key') else 'No'}")
 
 # Build KB
-if "full_kb" not in st.session_state:
-    full_kb, kb_meta, players_df, fixtures_text = build_full_kb(include_hist, last_n)
-    st.session_state.full_kb = full_kb
-    st.session_state.kb_meta = kb_meta
-    st.session_state.players_df = players_df
-    st.session_state.fixtures_text = fixtures_text
-    st.session_state.kb_hash = hashlib.sha256(full_kb.encode("utf-8")).hexdigest()
-else:
-    full_kb = st.session_state.full_kb
-    kb_meta = st.session_state.kb_meta
-    players_df = st.session_state.players_df
-    fixtures_text = st.session_state.fixtures_text
+# --------------- Build / refresh FULL KB (manual-cache) ---------------
+full_kb, kb_meta, players_df, fixtures_text = get_full_kb_cached(st.session_state.kb_epoch)
+st.session_state.full_kb = full_kb
+st.session_state.kb_meta = kb_meta
+st.session_state.players_df = players_df
+st.session_state.fixtures_text = fixtures_text
+st.session_state.kb_hash = hashlib.sha256(full_kb.encode("utf-8")).hexdigest()
 
 st.caption(kb_meta["header"])
 
