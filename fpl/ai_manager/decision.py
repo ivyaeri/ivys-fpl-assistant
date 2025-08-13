@@ -1,5 +1,4 @@
 # fpl/ai_manager/decision.py
-import re, json
 import streamlit as st
 import pandas as pd
 from langchain_openai import ChatOpenAI
@@ -7,6 +6,7 @@ from fpl.api import fetch_player_history
 from fpl.ai_manager.core import SQUAD_SHAPE, MAX_PER_CLUB, VALID_FORMATIONS
 from fpl.ai_manager.persist_db import save_state, append_gw_log
 
+import re, json
 # ---------- utils ----------
 def _json_from_text(s: str) -> dict:
     m = re.search(r"\{.*\}", s, re.S)
@@ -88,7 +88,7 @@ def _validate_transfer(players_df: pd.DataFrame, squad_ids: list[int], bank: flo
     if delta > bank + 1e-6:
         return False, "Over budget.", bank, squad_ids
 
-    new_bank = bank - max(0.0, delta)
+    new_bank = bank - float(delta)
     new_squad = [sid for sid in squad_ids if sid != out_id] + [in_id]
     return True, "Applied.", new_bank, new_squad
 
