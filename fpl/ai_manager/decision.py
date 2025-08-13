@@ -121,23 +121,54 @@ def draft_initial_squad(players_df: pd.DataFrame, kb_text: str, model_name: str,
         return {"error": "no_api"}
     llm = _llm(model_name)
     table = players_df[["id","web_name","team_short","pos","price","form","status","selected_by"]].to_string(index=False)
-    sys = "You draft a legal 15-man FPL squad. Return STRICT JSON only."
+    # --- replace your current `sys` and `usr` in draft_initial_squad(...) with this ---
+
+    sys = """
+    You are an elite Fantasy Premier League drafter. You will select a legal 15-man FPL squad for GW1
+    using only the tables and knowledge base provided. You MUST obey all constraints and return
+    STRICT JSON ONLY — no prose, no markdown, no code fences.
+    
+    Hard rules:
+    - Total budget must be within the user’s budget.
+    - Exactly 15 players with shape: GK=2, DEF=5, MID=5, FWD=3.
+    - Max 3 players per club.
+    - Only pick players that appear in the PLAYERS table.
+    - Prefer status 'a' (Available); avoid injured/suspended. If you choose a flagged player, justify it.
+    - Output must be exactly: {"squad_ids":[...], "captain_id": <int|null>, "reason":"..."} with integers only.
+    - No extra keys, no comments, no trailing commas.
+    """
+
     usr = f"""
-Budget £{budget:.1f}m. Shape exactly: GK=2, DEF=5, MID=5, FWD=3. Max 3 per club.
-Use this player table + knowledge base. Keep in mind the metrics like form, selected_by, points before making a choice.
-PLAYERS:
-{table}
+    Context:
+    - Budget: £{budget:.1f}m
+    - Required shape: GK=2, DEF=5, MID=5, FWD=3 (exact)
+    - Club cap: ≤ 3 per club
+    - Selection signals to consider (from the data below): form, points_per_game, minutes (reliability),
+      status/news (injury/rotation risk), ownership (template vs differential), and next fixtures (difficulty).
+    
+    PLAYERS (id, name, team, pos, price, form, status, selected_by, etc.):
+    {table}
+    
+    KNOWLEDGE BASE (fixtures + player lines):
+    {kb_text}
+    
+    Drafting guidance (apply judgement, but follow the rules above):
+    - Balance safe “template” picks with a few value differentials (generally <10% owned) if fixtures/form justify it.
+    - Give weight to good near-term fixtures; avoid clusters of tough fixtures at the same position when possible.
+    - Prefer nailed starters (high recent minutes) over rotation risks.
+    - Avoid players with negative injury/suspension news; if you include one, explain why in the reason.
+    - Choose a captain with high xGoal involvement proxies: strong fixture, likely 90 minutes, penalties/set pieces if indicated,
+      recent form and high points_per_game.
+    - Bench strategy: include budget enablers who are likely to play; ensure at least two playable DEF and one playable MID/FWD on bench.
+    
+    Return JSON ONLY (no extra keys, integers for IDs):
+    {{
+      "squad_ids": [15 integer ids],
+      "captain_id": <integer id or null>,
+      "reason": "<120–220 words explaining the squad structure, key picks, captain choice, and any notable risks>"
+    }}
+    """
 
-KB:
-{kb_text}
-
-Return JSON ONLY:
-{{
-  "squad_ids": [15 ids],
-  "captain_id": <int or null>,
-  "reason": "<long>"
-}}
-"""
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     return _json_from_text(raw) or {"error":"parse"}
 
