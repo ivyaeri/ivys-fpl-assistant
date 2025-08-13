@@ -124,8 +124,7 @@ def draft_initial_squad(players_df: pd.DataFrame, kb_text: str, model_name: str,
     sys = "You draft a legal 15-man FPL squad. Return STRICT JSON only."
     usr = f"""
 Budget £{budget:.1f}m. Shape exactly: GK=2, DEF=5, MID=5, FWD=3. Max 3 per club.
-Use this player table + knowledge base. Keep in mind the metrics like form, selected_by, points before making a choice. Rationalize having a player in the team before making final decision.
-Highly consider the ownership of the players in your choice
+Use this player table + knowledge base. Keep in mind the metrics like form, selected_by, points before making a choice.
 PLAYERS:
 {table}
 
