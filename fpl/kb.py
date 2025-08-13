@@ -28,6 +28,7 @@ def build_full_kb(include_history: bool = True, last_n: int = 5):
     events = pd.DataFrame(bs.get("events", []))
     players = pd.DataFrame(bs.get("elements", []))
     teams = pd.DataFrame(bs.get("teams", []))
+    team_short = teams.set_index("id")["short_name"].to_dict()
 
     # after players = pd.DataFrame(bs.get("elements", []))
 
