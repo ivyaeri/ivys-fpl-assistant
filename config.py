@@ -3,7 +3,7 @@ import os
 import pytz
 
 TZ = pytz.timezone("Europe/London")
-MODEL_NAME = os.getenv("FPL_LLM_MODEL", "gpt-5-mini")
+MODEL_NAME = os.getenv("FPL_LLM_MODEL", "gpt-5")
 
 # Database:
 #  - For Postgres set DATABASE_URL like:
