@@ -136,6 +136,7 @@ def draft_initial_squad(players_df: pd.DataFrame, kb_text: str, model_name: str,
     - Prefer status 'a' (Available); avoid injured/suspended. If you choose a flagged player, justify it.
     - Output must be exactly: {"squad_ids":[...], "captain_id": <int|null>, "reason":"..."} with integers only.
     - No extra keys, no comments, no trailing commas.
+    - Remember this is for the first game week and we need a very strong foundational team. Make strategic choices.
     """
 
     usr = f"""
