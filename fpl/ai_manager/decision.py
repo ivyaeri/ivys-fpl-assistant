@@ -136,7 +136,7 @@ Return JSON ONLY:
 {{
   "squad_ids": [15 ids],
   "captain_id": <int or null>,
-  "reason": "<short>"
+  "reason": "<long>"
 }}
 """
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
