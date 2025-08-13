@@ -133,8 +133,7 @@ if trigger_ai:
                 kb_meta=kb_meta,
                 players_df=players_df,
                 model_name=MODEL_NAME,
-                max_transfers_to_spend=st.session_state.get("max_fts_to_spend", 1),
-                constraints_note=st.session_state.get("constraints_note"),
+                
             )
         st.sidebar.success("AI manager updated.")
         st.rerun()
