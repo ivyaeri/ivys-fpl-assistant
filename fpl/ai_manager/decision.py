@@ -270,17 +270,20 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
         return
 
     cost = float(players_df[players_df["id"].isin(ids)]["price"].sum())
+   
     st.session_state.auto_mgr = {
         "squad": list(map(int, ids)),
         "bank": float(budget - cost),
-        "free_transfers": 0,              # FPL starts with 1 FT
+        "free_transfers": 0,
         "last_gw_processed": None,
-        "last_ft_accrual_gw": 0,          # NEW: no accrual performed yet
+        "last_ft_accrual_gw": 0,
         "chips": {"TC":True,"BB":True,"FH":True,"WC1":True,"WC2":True},
         "log": [],
         "seed_origin": "ai",
         "seed_reason": obj.get("reason",""),
+        "budget": float(budget),              # ← NEW: persist budget for future redrafts
     }
+
     save_state(user_id, st.session_state.auto_mgr)
 
 def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFrame,
@@ -310,17 +313,6 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
             state["free_transfers"] = min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
-        if gw==1:
-            dec= draft_initial_sqaud_wit_ai(
-                players_df,
-                st.session_state.full_kb,
-                model_name,
-                gw,
-                extra_instructions=extra_instructions if gw == gw_now else None, 
-                    )
-
-            
-        else:
             dec = weekly_decision(
                 players_df,
                 st.session_state.full_kb,
@@ -430,3 +422,36 @@ def refresh_logged_points(user_id: str) -> int:
             updated += 1
     save_state(user_id, state)
     return updated
+def force_redraft_gw1(user_id: str, players_df: pd.DataFrame, kb_text: str, model_name: str) -> tuple[bool, str]:
+    """Re-draft a full legal 15 for GW1 using the LLM and replace state.squad (no FT cost)."""
+    if "auto_mgr" not in st.session_state:
+        return False, "No state."
+    state = st.session_state.auto_mgr
+    budget = float(state.get("budget", 100.0))  # make sure you stored this when first seeding
+
+    if not st.session_state.openai_key:
+        return False, "no_api"
+
+    obj = draft_initial_squad(players_df, kb_text, model_name, budget=budget)
+    if obj.get("error"):
+        return False, obj["error"]
+
+    ids = obj.get("squad_ids") or []
+    ok, why = _validate_initial(players_df, ids, budget)
+    if not ok:
+        return False, f"redraft_invalid:{why}"
+
+    cost = float(players_df[players_df["id"].isin(ids)]["price"].sum())
+    # replace squad + bank; DO NOT change FTs or chips
+    state["squad"] = list(map(int, ids))
+    state["bank"]  = float(budget - cost)
+    state.setdefault("free_transfers", 0)
+    state.setdefault("chips", {"TC": True, "BB": True, "FH": True, "WC1": True, "WC2": True})
+    state.setdefault("last_gw_processed", None)
+    state.setdefault("last_ft_accrual_gw", 0)
+    state.setdefault("budget", budget)
+    state["seed_reason"] = obj.get("reason", "")
+
+    save_state(user_id, state)
+    return True, "Redrafted GW1 squad."
+
