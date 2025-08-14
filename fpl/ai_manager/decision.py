@@ -324,7 +324,8 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
             state["free_transfers"] = min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
-            dec = weekly_decision(
+
+        dec = weekly_decision(
                 players_df,
                 st.session_state.full_kb,
                 state,
