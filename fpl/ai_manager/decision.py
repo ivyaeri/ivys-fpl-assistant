@@ -116,63 +116,74 @@ def _llm(model_name: str) -> ChatOpenAI:
     return ChatOpenAI(openai_api_key=st.session_state.openai_key, model_name=model_name, temperature=0.2)
 
 # ---------- prompts ----------
-def draft_initial_squad(players_df: pd.DataFrame, kb_text: str, model_name: str, budget: float = 100.0) -> dict:
+
+def draft_initial_squad(
+    players_df: pd.DataFrame,
+    kb_text: str,
+    model_name: str,
+    budget: float = 100.0,
+    extra_instructions: str | None = None,
+    prior_squad_ids: list[int] | None = None,
+) -> dict:
+    """
+    Draft a legal 15-man squad. If `prior_squad_ids` provided, the model should revise
+    minimally while honoring `extra_instructions`.
+    Returns STRICT JSON: {"squad_ids":[...], "captain_id": <int|null>, "reason":"..."}
+    """
     if not st.session_state.openai_key:
         return {"error": "no_api"}
-    llm = _llm(model_name)
-    table = players_df[["id","web_name","team_short","pos","price","form","status","selected_by"]].to_string(index=False)
-    # --- replace your current `sys` and `usr` in draft_initial_squad(...) with this ---
 
-    sys = """
-    You are an elite Fantasy Premier League drafter. You will select a legal 15-man FPL squad for GW1
-    using only the tables and knowledge base provided. You MUST obey all constraints and return
-    STRICT JSON ONLY — no prose, no markdown, no code fences.
-    
-    Hard rules:
-    - Total budget must be within the user’s budget.
-    - Exactly 15 players with shape: GK=2, DEF=5, MID=5, FWD=3.
-    - Max 3 players per club.
-    - Only pick players that appear in the PLAYERS table.
-    - Prefer status 'a' (Available); avoid injured/suspended. If you choose a flagged player, justify it.
-    - Output must be exactly: {"squad_ids":[...], "captain_id": <int|null>, "reason":"..."} with integers only.
-    - No extra keys, no comments, no trailing commas.
-    - Remember this is for the first game week and we need a very strong foundational team. Make strategic choices.
-    - Do not spend too much money on one player if it means we have tp sacrfice good defense.
-    """
+    llm = _llm(model_name)
+    table = players_df[["id","web_name","team_short","pos","price","form","status","selected_by","points_per_game"]].to_string(index=False)
+
+    sys = (
+        "You are an elite Fantasy Premier League drafter. Always obey constraints and "
+        "return STRICT JSON ONLY (no prose/markdown/code fences)."
+    )
+
+    prior_block = ""
+    if prior_squad_ids:
+        prior_sub = players_df[players_df["id"].isin([int(x) for x in prior_squad_ids])][
+            ["id","web_name","team_short","pos","price","status","form","points_per_game"]
+        ].sort_values(["pos","web_name"]).to_string(index=False)
+        prior_block = f"""
+PRIOR_SQUAD_IDS: {list(map(int, prior_squad_ids))}
+PRIOR_SQUAD_TABLE:
+{prior_sub}
+
+If a prior squad is given, start from it and revise MINIMALLY (generally ≤5 swaps) unless
+the manager instructions require more. Keep budget/shape/club caps valid. If you believe
+no changes are needed, you may return the same 15.
+"""
+
+    note_block = f"\nMANAGER INSTRUCTIONS:\n{(extra_instructions or '').strip()[:800]}\n" if extra_instructions else ""
 
     usr = f"""
-    Context:
-    - Budget: £{budget:.1f}m
-    - Required shape: GK=2, DEF=5, MID=5, FWD=3 (exact)
-    - Club cap: ≤ 3 per club
-    - Selection signals to consider (from the data below): form, points_per_game, minutes (reliability),
-      status/news (injury/rotation risk), ownership (template vs differential), and next fixtures (difficulty).
-    
-    PLAYERS (id, name, team, pos, price, form, status, selected_by, etc.):
-    {table}
-    
-    KNOWLEDGE BASE (fixtures + player lines):
-    {kb_text}
-    
-    Drafting guidance (apply judgement, but follow the rules above):
-    - Balance safe “template” picks with a few value differentials (generally <10% owned) if fixtures/form justify it.
-    - Give weight to good near-term fixtures; avoid clusters of tough fixtures at the same position when possible.
-    - Prefer nailed starters (high recent minutes) over rotation risks.
-    - Avoid players with negative injury/suspension news; if you include one, explain why in the reason.
-    - Choose a captain with high xGoal involvement proxies: strong fixture, likely 90 minutes, penalties/set pieces if indicated,
-      recent form and high points_per_game.
-    - Bench strategy: include budget enablers who are likely to play; ensure at least two playable DEF and one playable MID/FWD on bench.
-    
-    Return JSON ONLY (no extra keys, integers for IDs):
-    {{
-      "squad_ids": [15 integer ids],
-      "captain_id": <integer id or null>,
-      "reason": "<120–220 words explaining the squad structure, key picks, captain choice, and any notable risks>"
-    }}
-    """
+Budget: £{budget:.1f}m. Exact shape: GK=2, DEF=5, MID=5, FWD=3. Max 3 per club.
+Prefer status 'a' (available). Consider form, points_per_game, minutes reliability,
+ownership (template vs differential), and near-term fixtures.
+
+{prior_block}{note_block}
+PLAYERS (id, name, team, pos, price, form, status, selected_by, ppg):
+{table}
+
+KNOWLEDGE BASE (fixtures + player lines):
+{kb_text}
+
+Return JSON ONLY:
+{{
+  "squad_ids": [15 integer ids],        // full legal 15
+  "captain_id": <integer id or null>,   // optional suggestion
+  "reason": "<120–220 words on structure, key picks, changes from prior if any>"
+}}
+Rules:
+- Total price ≤ budget; exact 2/5/5/3 shape; ≤3 per club; ids must be from the PLAYERS table.
+- If PRIOR_SQUAD_IDS are given, keep changes minimal unless instructions mandate otherwise.
+"""
 
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     return _json_from_text(raw) or {"error":"parse"}
+
 
 def weekly_decision(
     players_df: pd.DataFrame,
@@ -432,7 +443,14 @@ def force_redraft_gw1(user_id: str, players_df: pd.DataFrame, kb_text: str, mode
     if not st.session_state.openai_key:
         return False, "no_api"
 
-    obj = draft_initial_squad(players_df, kb_text, model_name, budget=budget)
+    obj = draft_initial_squad(
+        players_df,
+        kb_text,
+        model_name,
+        budget=budget,
+        extra_instructions=extra_instructions,
+        prior_squad_ids=state.get("squad") or None,   # ← let AI revise the previous 15
+    )
     if obj.get("error"):
         return False, obj["error"]
 
