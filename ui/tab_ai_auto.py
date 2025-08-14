@@ -78,11 +78,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
         )
         if gw_now == 1:
             st.markdown("---")
-            force_redraft_toggle = st.checkbox(
-                "Force full re-draft for **GW1** (replace all 15 via AI, no FT cost)",
-                value=False,
-                help="Uses the drafter again; applies your note and may revise the current 15.",
-            )
+            force_redraft_toggle = True
         else:
             force_redraft_toggle = False
 
@@ -91,6 +87,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
         regen_disabled = not bool(st.session_state.openai_key)
         if st.button("🔁 Regenerate this GW (AI)", type="primary", disabled=regen_disabled):
             with st.spinner("Re-evaluating this gameweek…"):
+                print(force_redraft_toggle)
                 # If GW1 and user wants a full redraft, do it first, then log the week
                 if gw_now == 1 and force_redraft_toggle:
                     ok, msg = force_redraft_gw1(
