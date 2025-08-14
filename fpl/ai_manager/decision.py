@@ -137,6 +137,7 @@ def draft_initial_squad(players_df: pd.DataFrame, kb_text: str, model_name: str,
     - Output must be exactly: {"squad_ids":[...], "captain_id": <int|null>, "reason":"..."} with integers only.
     - No extra keys, no comments, no trailing commas.
     - Remember this is for the first game week and we need a very strong foundational team. Make strategic choices.
+    - Do not spend too much money on one player if it means we have tp sacrfice good defense.
     """
 
     usr = f"""
