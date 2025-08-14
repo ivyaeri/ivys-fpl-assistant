@@ -310,15 +310,25 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
             state["free_transfers"] = min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
+        if gw==1:
+            dec= draft_initial_sqaud_wit_ai(
+                players_df,
+                st.session_state.full_kb,
+                model_name,
+                gw,
+                extra_instructions=extra_instructions if gw == gw_now else None, 
+                    )
 
-        dec = weekly_decision(
-            players_df,
-            st.session_state.full_kb,
-            state,
-            model_name,
-            gw,
-            extra_instructions=extra_instructions if gw == gw_now else None,  # only apply to this run's current GW
-        )
+            
+        else:
+            dec = weekly_decision(
+                players_df,
+                st.session_state.full_kb,
+                state,
+                model_name,
+                gw,
+                extra_instructions=extra_instructions if gw == gw_now else None,  # only apply to this run's current GW
+            )
         if dec.get("error"):
             break
 
