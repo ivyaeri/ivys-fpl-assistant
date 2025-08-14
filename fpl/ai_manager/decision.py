@@ -433,12 +433,18 @@ def refresh_logged_points(user_id: str) -> int:
             updated += 1
     save_state(user_id, state)
     return updated
-def force_redraft_gw1(user_id: str, players_df: pd.DataFrame, kb_text: str, model_name: str) -> tuple[bool, str]:
+def force_redraft_gw1(
+    user_id: str,
+    players_df: pd.DataFrame,
+    kb_text: str,
+    model_name: str,
+    extra_instructions: str | None = None,
+) -> tuple[bool, str]:
     """Re-draft a full legal 15 for GW1 using the LLM and replace state.squad (no FT cost)."""
     if "auto_mgr" not in st.session_state:
         return False, "No state."
     state = st.session_state.auto_mgr
-    budget = float(state.get("budget", 100.0))  # make sure you stored this when first seeding
+    budget = float(state.get("budget", 100.0))
 
     if not st.session_state.openai_key:
         return False, "no_api"
@@ -472,4 +478,6 @@ def force_redraft_gw1(user_id: str, players_df: pd.DataFrame, kb_text: str, mode
 
     save_state(user_id, state)
     return True, "Redrafted GW1 squad."
+
+
 
