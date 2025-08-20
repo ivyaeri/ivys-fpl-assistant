@@ -159,7 +159,10 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             else:
                 st.markdown("**No transfer made.**")
 
-            st.markdown(f"**Reason (AI):** {entry.get('reason', '')}")
+            st.markdown(f"**Reason (AI):** {entry.get('reason', '')}. {entry.get('transfer_reasons', '')} ")
+            st.markdown(f"**Bench Reason (AI):** {entry.get('bench_reason','')} | bench_order: {entry.get('bench_ids',[])}")
+               
+            
 
             # Prepare lists/sets
             xi_list = list(map(int, entry.get("xi_ids", [])))
