@@ -77,14 +77,49 @@ def build_full_kb(include_history: bool = True, last_n: int = 5):
                 parts.append(f"GW{gw} {'vs' if is_home else '@'} {opps} (FDR {fdr})")
             team_fx_lines.append(f"TEAM_FIX: {team_short.get(tid, str(tid))} → " + "; ".join(parts))
 
-    gw_now = None
-    if not events.empty:
-        if "is_current" in events.columns and events["is_current"].any():
-            gw_now = int(events.loc[events["is_current"] == True, "id"].iloc[0])
-        else:
-            upcoming = events[events["finished"] == False].sort_values("deadline_time")
-            if not upcoming.empty:
-                gw_now = int(upcoming["id"].iloc[0])
+    # --- Robust GW calculation (live + next) ---
+    now_uk = datetime.now(TZ)
+    
+    gw_now = None          # what you'll display
+    live_gw = None         # last deadline passed (GW in progress)
+    next_gw = None         # upcoming GW
+    
+    if not events.empty and "deadline_time" in events.columns:
+        ev = events.copy()
+        ev["_dl"] = (
+            pd.to_datetime(ev["deadline_time"], utc=True, errors="coerce")
+              .dt.tz_convert(TZ)
+        )
+        ev = ev.dropna(subset=["_dl"]).sort_values("_dl").reset_index(drop=True)
+        if not ev.empty:
+            first_id = int(ev.loc[0, "id"])
+            last_id  = int(ev.loc[len(ev)-1, "id"])
+    
+            # index of last passed deadline
+            passed_idx = ev.index[ev["_dl"] <= now_uk]
+            if len(passed_idx) == 0:
+                live_gw = first_id              # pre-season → GW1
+                next_gw = first_id              # next is GW1 as well
+            else:
+                i = int(passed_idx[-1])
+                live_gw = int(ev.loc[i, "id"])
+                next_gw = int(ev.loc[min(i+1, len(ev)-1), "id"])
+    
+            # if we're after the final deadline, clamp both to the last GW
+            if now_uk > ev.loc[len(ev)-1, "_dl"]:
+                live_gw = last_id
+                next_gw = last_id
+    
+            # Decide what to SHOW:
+            # if the live GW is marked finished in bootstrap, advance the banner
+            if "finished" in ev.columns:
+                live_finished = bool(ev.loc[ev["id"] == live_gw, "finished"].iloc[0])
+                gw_now = next_gw if live_finished else live_gw
+            else:
+                gw_now = live_gw
+    else:
+        gw_now = None
+
 
     header = f"KB_BUILT: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M')} | CURRENT_GW: {gw_now} | PLAYERS: {len(p_lines)}"
     full_kb = f"{header}\n\n[FIXTURES]\n" + "\n".join(team_fx_lines) + "\n\n[PLAYERS]\n" + "\n".join(p_lines)
