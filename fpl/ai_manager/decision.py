@@ -235,7 +235,7 @@ Return JSON ONLY:
   "captain_id": <int>,
   "reason": "<short>"
 }
-Rules: like-for-like swap; stay under budget and ≤3 per club; XI must have 1 GK and a legal FPL formation; bench has remaining 4 players.
+Rules: like-for-like swap; stay under budget and ≤3 per club; XI must have 1 GK and a legal FPL formation; bench has remaining 4 players. Give me the order of the bench at the end.
 """
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     return _json_from_text(raw) or {"error":"parse"}
