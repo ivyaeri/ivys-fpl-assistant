@@ -8,7 +8,7 @@ from fpl.api import fetch_bootstrap
 # if "DATABASE_URL" in st.secrets:
 #     os.environ["DATABASE_URL"] = st.secrets["DATABASE_URL"]
 os.environ.setdefault("USE_SQLITE", "1") 
-from fpl.ai_manager.persist_db import init_db, load_state
+from fpl.ai_manager.persist_db import init_db, load_state, DATABASE_URL
 from fpl.ai_manager.decision import ensure_initial_squad_with_ai, run_ai_auto_until_current
 from ui.tabs_leaderboards import render_top20, render_top10_by_pos, render_budget
 from ui.tab_fixtures import render_fixtures_tab
