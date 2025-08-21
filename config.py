@@ -9,7 +9,7 @@ MODEL_NAME = os.getenv("FPL_LLM_MODEL", "gpt-5-mini")
 #  - For Postgres set DATABASE_URL like:
 #    postgresql+psycopg2://user:pass@host:5432/dbname
 #  - Fallback to local sqlite file if not set.
-# DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/fpl.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/fpl_local.db")
 
 # Season label (key in DB rows)
 SEASON = os.getenv("FPL_SEASON", "2025-26")
