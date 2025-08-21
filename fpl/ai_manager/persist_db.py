@@ -19,7 +19,7 @@ except Exception:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SQLITE_PATH = REPO_ROOT / "data" / "fpl_local.db"
 DEFAULT_SQLITE_URL = f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
-
+print(DEFAULT_SQLITE_PATH,DEFAULT_SQLITE_URL )
 DATABASE_URL = (
     os.getenv("DATABASE_URL")
     or CONFIG_DB_URL
