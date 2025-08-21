@@ -35,6 +35,7 @@ if IS_SQLITE:
 # ---- Engine config: SQLite (local) vs Neon/Postgres ----
 if IS_SQLITE:
     # Streamlit-friendly sqlite: allow cross-thread use of the same connection
+    print(DATABASE_URL)
     engine = create_engine(
         DATABASE_URL,
         future=True,
