@@ -315,6 +315,8 @@ Validation you MUST satisfy before output:
 - Budget must be feasible using the given prices + bank.
 - If no strong move within constraints, return an empty transfers array and chip="NONE".
 - Output ONLY the JSON object.
+RULES:
+- If the users asks you to use a transfer for a specific player and he fits in the budget do it.
 """
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     return _json_from_text(raw) or {"error":"parse"}
