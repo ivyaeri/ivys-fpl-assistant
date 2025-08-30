@@ -7,6 +7,7 @@ from fpl.ai_manager.core import SQUAD_SHAPE, MAX_PER_CLUB, VALID_FORMATIONS
 from fpl.ai_manager.persist_db import save_state, append_gw_log
 
 import re, json
+from typing import Tuple, List, Dict, Any
 
 # ---------- utils ----------
 def _json_from_text(s: str) -> dict:
@@ -18,15 +19,30 @@ def _json_from_text(s: str) -> dict:
     except Exception:
         return {}
 
-def _validate_initial(players_df: pd.DataFrame, ids: list[int], budget: float = 100.0) -> tuple[bool,str]:
-    if not isinstance(ids, list) or len(ids) != 15:
-        return False, "Need 15 ids."
-    ids = [int(x) for x in ids]
-    if len(set(ids)) != 15:
-        return False, "Duplicate ids."
-    sub = players_df[players_df["id"].isin(ids)].copy()
+def _ensure_maps(players_df: pd.DataFrame) -> Tuple[Dict[int,int], Dict[int,int]]:
+    """
+    Returns (code_to_id, id_to_code) from players_df (expects both 'code' and 'id' cols).
+    """
+    if "code" not in players_df.columns:
+        raise ValueError("players_df must contain a 'code' column.")
+    # id column may be absent in some contexts, so guard it
+    if "id" in players_df.columns:
+        code_to_id = {int(c): int(i) for c, i in zip(players_df["code"], players_df["id"])}
+        id_to_code = {int(i): int(c) for i, c in zip(players_df["id"], players_df["code"])}
+    else:
+        code_to_id, id_to_code = {}, {}
+    return code_to_id, id_to_code
+
+# ---------- validation (CODES, not ids) ----------
+def _validate_initial(players_df: pd.DataFrame, codes: List[int], budget: float = 100.0) -> Tuple[bool,str]:
+    if not isinstance(codes, list) or len(codes) != 15:
+        return False, "Need 15 codes."
+    codes = [int(x) for x in codes]
+    if len(set(codes)) != 15:
+        return False, "Duplicate codes."
+    sub = players_df[players_df["code"].isin(codes)].copy()
     if len(sub) != 15:
-        return False, "Unknown ids."
+        return False, "Unknown codes."
 
     shape = sub["pos"].value_counts().to_dict()
     for p, need in SQUAD_SHAPE.items():
@@ -39,20 +55,25 @@ def _validate_initial(players_df: pd.DataFrame, ids: list[int], budget: float = 
         return False, "Exceeds 3/club."
     return True, ""
 
-def _validate_lineup(players_df: pd.DataFrame, squad_ids: list[int], xi_ids: list[int], bench_order: list[int]) -> tuple[bool,str]:
-    all_ids = set(squad_ids)
-    xi = list(map(int, xi_ids or []))
-    bench = list(map(int, bench_order or []))
+def _validate_lineup(
+    players_df: pd.DataFrame,
+    squad_codes: List[int],
+    xi_codes: List[int],
+    bench_codes: List[int],
+) -> Tuple[bool,str]:
+    all_codes = set(map(int, squad_codes))
+    xi = list(map(int, xi_codes or []))
+    bench = list(map(int, bench_codes or []))
     if len(xi) != 11:
-        return False, "XI must have 11 ids."
+        return False, "XI must have 11 codes."
     if len(bench) != 4:
-        return False, "Bench must have 4 ids."
+        return False, "Bench must have 4 codes."
     if set(xi) & set(bench):
         return False, "XI and bench overlap."
-    if set(xi) | set(bench) != all_ids:
+    if set(xi) | set(bench) != all_codes:
         return False, "XI+bench must cover all 15."
 
-    sub = players_df[players_df["id"].isin(xi)]
+    sub = players_df[players_df["code"].isin(xi)]
     counts = sub["pos"].value_counts().to_dict()
     defc, midc, fwdc = counts.get("DEF", 0), counts.get("MID", 0), counts.get("FWD", 0)
     if (defc, midc, fwdc) not in VALID_FORMATIONS:
@@ -61,106 +82,119 @@ def _validate_lineup(players_df: pd.DataFrame, squad_ids: list[int], xi_ids: lis
         return False, "XI must have exactly 1 GK."
     return True, ""
 
-def _validate_transfer(players_df: pd.DataFrame, squad_ids: list[int], bank: float,
-                       out_id: int | None, in_id: int | None) -> tuple[bool,str,float,list[int]]:
-    """Single transfer validator (kept for backward compatibility)."""
-    if out_id is None and in_id is None:
-        return True, "Hold.", bank, squad_ids
-    if out_id is None or in_id is None:
-        return False, "Missing ids.", bank, squad_ids
+def _validate_transfer(
+    players_df: pd.DataFrame,
+    squad_codes: List[int],
+    bank: float,
+    out_code: int | None,
+    in_code: int | None,
+) -> Tuple[bool,str,float,List[int]]:
+    """Single transfer validator (codes)."""
+    if out_code is None and in_code is None:
+        return True, "Hold.", bank, squad_codes
+    if out_code is None or in_code is None:
+        return False, "Missing codes.", bank, squad_codes
 
-    out_id, in_id = int(out_id), int(in_id)
-    if out_id not in squad_ids:
-        return False, "Out id not in squad.", bank, squad_ids
-    if in_id in squad_ids:
-        return False, "In id already in squad.", bank, squad_ids
+    out_code, in_code = int(out_code), int(in_code)
+    if out_code not in squad_codes:
+        return False, "Out code not in squad.", bank, squad_codes
+    if in_code in squad_codes:
+        return False, "In code already in squad.", bank, squad_codes
 
-    out = players_df.loc[players_df["id"] == out_id]
-    inn = players_df.loc[players_df["id"] == in_id]
+    out = players_df.loc[players_df["code"] == out_code]
+    inn = players_df.loc[players_df["code"] == in_code]
     if out.empty or inn.empty:
-        return False, "Unknown id(s).", bank, squad_ids
+        return False, "Unknown code(s).", bank, squad_codes
     if out.iloc[0]["pos"] != inn.iloc[0]["pos"]:
-        return False, "Must be like-for-like.", bank, squad_ids
+        return False, "Must be like-for-like.", bank, squad_codes
 
-    tmp = players_df[players_df["id"].isin([sid for sid in squad_ids if sid != out_id] + [in_id])]
+    tmp = players_df[players_df["code"].isin([c for c in squad_codes if c != out_code] + [in_code])]
     if tmp["team_short"].value_counts().max() > MAX_PER_CLUB:
-        return False, "Would exceed 3/club.", bank, squad_ids
+        return False, "Would exceed 3/club.", bank, squad_codes
 
     delta = float(inn.iloc[0]["price"]) - float(out.iloc[0]["price"])
     if delta > bank + 1e-6:
-        return False, "Over budget.", bank, squad_ids
+        return False, "Over budget.", bank, squad_codes
 
     new_bank = bank - float(delta)
-    new_squad = [sid for sid in squad_ids if sid != out_id] + [in_id]
+    new_squad = [c for c in squad_codes if c != out_code] + [in_code]
     return True, "Applied.", new_bank, new_squad
 
-# ---------- multi-transfer validator ----------
+# ---------- multi-transfer validator (codes) ----------
 HIT_COST_DEFAULT = 4  # points per extra transfer
 
 def _validate_transfers(
     players_df: pd.DataFrame,
-    squad_ids: list[int],
+    squad_codes: List[int],
     bank: float,
-    transfers: list[dict],
-) -> tuple[bool, str, float, list[int]]:
+    transfers: List[dict],
+) -> Tuple[bool, str, float, List[int]]:
     """
-    Apply zero-or-more like-for-like transfers in order.
-    transfers: [{"out_id": int, "in_id": int}, ...]
-    Returns (ok, msg, new_bank, new_squad).
+    Apply zero-or-more like-for-like transfers in order (codes).
+    transfers: [{"out_code": int, "in_code": int}, ...]
+    Returns (ok, msg, new_bank, new_squad_codes).
     """
     if not transfers:
-        return True, "Hold.", float(bank), list(squad_ids)
+        return True, "Hold.", float(bank), list(squad_codes)
 
     new_bank = float(bank)
-    new_squad = list(map(int, squad_ids))
+    new_squad = list(map(int, squad_codes))
     seen_out, seen_in = set(), set()
 
     for t in transfers:
+        # backward-compat: accept out_id/in_id if model still returns ids
+        out_code = t.get("out_code")
+        in_code = t.get("in_code")
+        if out_code is None or in_code is None:
+            # Maybe old keys; caller should normalize but guard here
+            return False, "Transfers must use out_code/in_code.", bank, squad_codes
+
         try:
-            out_id = int(t.get("out_id"))
-            in_id  = int(t.get("in_id"))
+            out_code = int(out_code)
+            in_code  = int(in_code)
         except Exception:
-            return False, "Bad transfer ids.", bank, squad_ids
+            return False, "Bad transfer codes.", bank, squad_codes
 
-        if out_id in seen_out:
-            return False, f"Duplicate out_id {out_id}.", bank, squad_ids
-        if in_id in seen_in:
-            return False, f"Duplicate in_id {in_id}.", bank, squad_ids
+        if out_code in seen_out:
+            return False, f"Duplicate out_code {out_code}.", bank, squad_codes
+        if in_code in seen_in:
+            return False, f"Duplicate in_code {in_code}.", bank, squad_codes
 
-        if out_id not in new_squad:
-            return False, f"Out id {out_id} not in current squad.", bank, squad_ids
-        if in_id in new_squad:
-            return False, f"In id {in_id} already in squad.", bank, squad_ids
+        if out_code not in new_squad:
+            return False, f"Out code {out_code} not in current squad.", bank, squad_codes
+        if in_code in new_squad:
+            return False, f"In code {in_code} already in squad.", bank, squad_codes
 
-        out = players_df.loc[players_df["id"] == out_id]
-        inn = players_df.loc[players_df["id"] == in_id]
+        out = players_df.loc[players_df["code"] == out_code]
+        inn = players_df.loc[players_df["code"] == in_code]
         if out.empty or inn.empty:
-            return False, "Unknown id(s).", bank, squad_ids
+            return False, "Unknown code(s).", bank, squad_codes
 
         if out.iloc[0]["pos"] != inn.iloc[0]["pos"]:
-            return False, "Must be like-for-like.", bank, squad_ids
+            return False, "Must be like-for-like.", bank, squad_codes
 
-        # provisional squad for club-cap check
-        candidate = [sid for sid in new_squad if sid != out_id] + [in_id]
-        tmp = players_df[players_df["id"].isin(candidate)]
+        candidate = [c for c in new_squad if c != out_code] + [in_code]
+        tmp = players_df[players_df["code"].isin(candidate)]
         if tmp["team_short"].value_counts().max() > MAX_PER_CLUB:
-            return False, "Would exceed 3/club.", bank, squad_ids
+            return False, "Would exceed 3/club.", bank, squad_codes
 
-        # budget
         delta = float(inn.iloc[0]["price"]) - float(out.iloc[0]["price"])
         if delta > new_bank + 1e-6:
-            return False, "Over budget.", bank, squad_ids
+            return False, "Over budget.", bank, squad_codes
 
         new_bank -= float(delta)
         new_squad = candidate
-        seen_out.add(out_id); seen_in.add(in_id)
+        seen_out.add(out_code); seen_in.add(in_code)
 
     return True, "Applied.", float(new_bank), list(new_squad)
 
-# ---------- scoring ----------
-def _event_points(pid: int, gw: int) -> int:
+# ---------- scoring (codes → id for API) ----------
+def _event_points(code: int, gw: int, code_to_id: Dict[int,int]) -> int:
     try:
-        h = fetch_player_history(pid).get("history", [])
+        pid = code_to_id.get(int(code))
+        if not pid:
+            return 0
+        h = fetch_player_history(int(pid)).get("history", [])
         for g in h:
             if int(g.get("round", -1)) == int(gw):
                 return int(g.get("total_points", 0))
@@ -168,20 +202,27 @@ def _event_points(pid: int, gw: int) -> int:
         pass
     return 0
 
-def _compute_points(xi_ids: list[int], cap_id: int, bench_ids: list[int], gw: int, chip: str) -> int:
-    xi_pts = sum(_event_points(int(pid), gw) for pid in xi_ids)
-    cap_pts = _event_points(int(cap_id), gw) if cap_id else 0
+def _compute_points(
+    xi_codes: List[int],
+    cap_code: int,
+    bench_codes: List[int],
+    gw: int,
+    chip: str,
+    code_to_id: Dict[int,int],
+) -> int:
+    xi_pts = sum(_event_points(int(c), gw, code_to_id) for c in xi_codes)
+    cap_pts = _event_points(int(cap_code), gw, code_to_id) if cap_code else 0
     total = xi_pts + cap_pts
     if chip == "TC":
-        total += cap_pts  # triple captain adds +1x captain points (since we already counted him twice)
+        total += cap_pts  # triple captain adds +1x captain points (since already counted twice)
     if chip == "BB":
-        total += sum(_event_points(int(pid), gw) for pid in bench_ids)
+        total += sum(_event_points(int(c), gw, code_to_id) for c in bench_codes)
     return int(total)
 
 def _llm(model_name: str) -> ChatOpenAI:
     return ChatOpenAI(openai_api_key=st.session_state.openai_key, model_name=model_name, temperature=0.2)
 
-# ---------- prompts ----------
+# ---------- prompts (return CODES) ----------
 
 def draft_initial_squad(
     players_df: pd.DataFrame,
@@ -189,31 +230,36 @@ def draft_initial_squad(
     model_name: str,
     budget: float = 100.0,
     extra_instructions: str | None = None,
-    prior_squad_ids: list[int] | None = None,
+    prior_squad_codes: List[int] | None = None,
 ) -> dict:
     """
-    Draft a legal 15-man squad. If `prior_squad_ids` provided, the model should revise
-    minimally while honoring `extra_instructions`.
-    Returns STRICT JSON: {"squad_ids":[...], "captain_id": <int|null>, "reason":"..."}
+    Draft a legal 15-man squad using CODES as identifiers.
+    Returns STRICT JSON:
+      {"squad_codes":[...], "captain_code": <int|null>, "reason":"..."}
     """
     if not st.session_state.openai_key:
         return {"error": "no_api"}
 
+    if "code" not in players_df.columns:
+        return {"error": "players_df missing 'code' column"}
+
     llm = _llm(model_name)
-    table = players_df[["id","web_name","team_short","pos","price","form","status","selected_by","points_per_game"]].to_string(index=False)
+    table = players_df[
+        ["code","web_name","team_short","pos","price","form","status","selected_by","points_per_game"]
+    ].sort_values(["pos","web_name"]).to_string(index=False)
 
     sys = (
         "You are an elite Fantasy Premier League drafter. Always obey constraints and "
-        "return STRICT JSON ONLY (no prose/markdown/code fences)."
+        "return STRICT JSON ONLY (no prose/markdown/code fences). Use player CODES."
     )
 
     prior_block = ""
-    if prior_squad_ids:
-        prior_sub = players_df[players_df["id"].isin([int(x) for x in prior_squad_ids])][
-            ["id","web_name","team_short","pos","price","status","form","points_per_game"]
+    if prior_squad_codes:
+        prior_sub = players_df[players_df["code"].isin([int(x) for x in prior_squad_codes])][
+            ["code","web_name","team_short","pos","price","status","form","points_per_game"]
         ].sort_values(["pos","web_name"]).to_string(index=False)
         prior_block = f"""
-PRIOR_SQUAD_IDS: {list(map(int, prior_squad_ids))}
+PRIOR_SQUAD_CODES: {list(map(int, prior_squad_codes))}
 PRIOR_SQUAD_TABLE:
 {prior_sub}
 
@@ -230,7 +276,7 @@ Prefer status 'a' (available). Consider form, points_per_game, minutes reliabili
 ownership (template vs differential), and near-term fixtures.
 
 {prior_block}{note_block}
-PLAYERS (id, name, team, pos, price, form, status, selected_by, ppg):
+PLAYERS (code, name, team, pos, price, form, status, selected_by, ppg):
 {table}
 
 KNOWLEDGE BASE (fixtures + player lines):
@@ -238,18 +284,27 @@ KNOWLEDGE BASE (fixtures + player lines):
 
 Return JSON ONLY:
 {{
-  "squad_ids": [15 integer ids],        // full legal 15
-  "captain_id": <integer id or null>,   // optional suggestion
+  "squad_codes": [15 integer codes],        // full legal 15
+  "captain_code": <integer code or null>,   // optional suggestion
   "reason": "<120–220 words on structure, key picks, changes from prior if any>"
 }}
 Rules:
-- Total price ≤ budget; exact 2/5/5/3 shape; ≤3 per club; ids must be from the PLAYERS table.
-- If PRIOR_SQUAD_IDS are given, keep changes minimal unless instructions mandate otherwise.
+- Total price ≤ budget; exact 2/5/5/3 shape; ≤3 per club; codes must be from the PLAYERS table.
+- If PRIOR_SQUAD_CODES are given, keep changes minimal unless instructions mandate otherwise.
 """
 
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
-    return _json_from_text(raw) or {"error":"parse"}
+    obj = _json_from_text(raw)
+    if not obj:
+        return {"error":"parse"}
 
+    # Backward-compat: if model accidentally returned ids, map them to codes if possible
+    if "squad_codes" not in obj and "squad_ids" in obj and "id" in players_df.columns:
+        _, id_to_code = _ensure_maps(players_df)
+        obj["squad_codes"] = [int(id_to_code.get(int(i), -1)) for i in obj["squad_ids"]]
+        obj["captain_code"] = int(id_to_code.get(int(obj.get("captain_id") or 0), 0)) or None
+
+    return obj
 
 def weekly_decision(
     players_df: pd.DataFrame,
@@ -259,13 +314,16 @@ def weekly_decision(
     gw: int,
     extra_instructions: str | None = None,   # optional manager note for this run
 ) -> dict:
-    """Allow zero-or-more transfers, bench ordering, and chip (TC/BB)."""
+    """Allow zero-or-more transfers, bench ordering, and chip (TC/BB). Uses CODES."""
     if not st.session_state.openai_key:
         return {"error":"no_api"}
+    if "code" not in players_df.columns:
+        return {"error":"players_df missing 'code' column"}
+
     llm = _llm(model_name)
-    squad_ids = state["squad"]
-    sub = players_df[players_df["id"].isin(squad_ids)][
-        ["id","web_name","team_short","pos","price","status","form","points_per_game"]
+    squad_codes = list(map(int, state["squad"]))
+    sub = players_df[players_df["code"].isin(squad_codes)][
+        ["code","web_name","team_short","pos","price","status","form","points_per_game"]
     ].sort_values(["pos","web_name"])
     table = sub.to_string(index=False)
     chips = [k for k,v in state.get("chips",{}).items() if v] or ["NONE"]
@@ -276,7 +334,7 @@ def weekly_decision(
 
     sys = (
         "You are an autonomous FPL manager. "
-        "Return STRICT JSON only. No markdown, no comments."
+        "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
     usr = f"""
 Weekly decision for GW {gw}.
@@ -286,9 +344,9 @@ Resources:
 - Bank: £{state['bank']:.1f}m
 - Chips available: {chips} (only 'TC' or 'BB' allowed here)
 - Constraints: ≤3 per club; stay under budget; like-for-like by position; valid XI (1 GK; allowed formations: {{3-4-3,3-5-2,4-4-2,4-3-3,5-3-2,5-4-1}})
-- Pick XI, set bench order (4 ids; 1st = first sub), choose a captain in the XI.
+- Pick XI, set bench order (4 codes; 1st = first sub), choose a captain in the XI.
 
-CURRENT 15:
+CURRENT 15 (by CODE):
 {table}
 
 KNOWLEDGE BASE:
@@ -297,10 +355,10 @@ KNOWLEDGE BASE:
 Return JSON ONLY (schema EXACTLY):
 {
   "chip": "NONE" | "TC" | "BB",
-  "transfers": [{"out_id": <int>, "in_id": <int>}],   // zero or more
-  "xi_ids": [11 ints],
-  "bench_order": [4 ints],
-  "captain_id": <int>,
+  "transfers": [{"out_code": <int>, "in_code": <int>}],   // zero or more
+  "xi_codes": [11 ints],
+  "bench_codes": [4 ints],
+  "captain_code": <int>,
 
   "reason": "<short rationale for transfers/captain/formation>",
   "transfer_reasons": ["<t1>", "<t2>", "..."],
@@ -308,9 +366,9 @@ Return JSON ONLY (schema EXACTLY):
 }
 
 Validation you MUST satisfy before output:
-- Apply the transfers to the CURRENT 15, then choose xi_ids+bench_order that partition the resulting 15.
+- Apply the transfers to the CURRENT 15 (by code), then choose xi_codes+bench_codes that partition the resulting 15.
 - Like-for-like by position for every transfer.
-- captain_id ∈ xi_ids.
+- captain_code ∈ xi_codes.
 - ≤3 per club after all transfers.
 - Budget must be feasible using the given prices + bank.
 - If no strong move within constraints, return an empty transfers array and chip="NONE".
@@ -319,15 +377,54 @@ RULES:
 - If the users asks you to use a transfer for a specific player and he fits in the budget do it.
 """
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
-    return _json_from_text(raw) or {"error":"parse"}
+    obj = _json_from_text(raw)
+    if not obj:
+        return {"error":"parse"}
 
-# ---------- orchestration ----------
-def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text: str,
-                                 model_name: str, budget: float = 100.0):
-    """If no squad, ask LLM to draft one. No greedy fallback."""
+    # Backward-compat guard if model used *ids* by mistake
+    if ("xi_codes" not in obj or "bench_codes" not in obj or "transfers" not in obj) and "id" in players_df.columns:
+        _, id_to_code = _ensure_maps(players_df)
+        # map fields if needed
+        if "xi_codes" not in obj and "xi_ids" in obj:
+            obj["xi_codes"] = [int(id_to_code.get(int(i), -1)) for i in obj["xi_ids"]]
+        if "bench_codes" not in obj:
+            ids = obj.get("bench_ids") or obj.get("bench_order") or []
+            obj["bench_codes"] = [int(id_to_code.get(int(i), -1)) for i in ids]
+        if "captain_code" not in obj and "captain_id" in obj:
+            obj["captain_code"] = int(id_to_code.get(int(obj["captain_id"]), 0)) or None
+        tx = obj.get("transfers", [])
+        fixed = []
+        for t in tx:
+            if "out_code" in t and "in_code" in t:
+                fixed.append({"out_code": int(t["out_code"]), "in_code": int(t["in_code"])})
+            elif "out_id" in t and "in_id" in t:
+                fixed.append({
+                    "out_code": int(id_to_code.get(int(t["out_id"]), -1)),
+                    "in_code": int(id_to_code.get(int(t["in_id"]), -1)),
+                })
+        obj["transfers"] = fixed
+
+    return obj
+
+# ---------- orchestration (codes) ----------
+def ensure_initial_squad_with_ai(
+    user_id: str,
+    players_df: pd.DataFrame,
+    kb_text: str,
+    model_name: str,
+    budget: float = 100.0,
+):
+    """If no squad, ask LLM to draft one. Stores CODES in state."""
     if "auto_mgr" in st.session_state and st.session_state.auto_mgr.get("squad"):
         return
-    obj = draft_initial_squad(players_df, kb_text, model_name, budget=budget)
+
+    # Build maps for fallback if the model returns ids
+    _, id_to_code = _ensure_maps(players_df)
+
+    obj = draft_initial_squad(
+        players_df, kb_text, model_name, budget=budget,
+        prior_squad_codes=None
+    )
 
     # error / no-api path
     if obj.get("error"):
@@ -341,16 +438,18 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
             "log": [],
             "seed_origin": obj["error"],
             "budget": float(budget),
-            # hits policy
             "hit_cost": HIT_COST_DEFAULT,
-            "max_hit": 0,  # default: no hits unless you change this
+            "max_hit": 0,
         }
         save_state(user_id, st.session_state.auto_mgr)
         return
 
-    # validate draft
-    ids = obj.get("squad_ids") or []
-    ok, why = _validate_initial(players_df, ids, budget)
+    # normalize to codes
+    codes = obj.get("squad_codes") or []
+    if (not codes) and obj.get("squad_ids"):  # backward compat
+        codes = [int(id_to_code.get(int(i), -1)) for i in obj["squad_ids"]]
+
+    ok, why = _validate_initial(players_df, codes, budget)
     if not ok:
         st.session_state.auto_mgr = {
             "squad": [],
@@ -368,10 +467,10 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
         save_state(user_id, st.session_state.auto_mgr)
         return
 
-    cost = float(players_df[players_df["id"].isin(ids)]["price"].sum())
+    cost = float(players_df[players_df["code"].isin(codes)]["price"].sum())
 
     st.session_state.auto_mgr = {
-        "squad": list(map(int, ids)),
+        "squad": list(map(int, codes)),   # CODES
         "bank": float(budget - cost),
         "free_transfers": 0,
         "last_gw_processed": None,
@@ -382,15 +481,20 @@ def ensure_initial_squad_with_ai(user_id: str, players_df: pd.DataFrame, kb_text
         "seed_reason": obj.get("reason",""),
         "budget": float(budget),              # persist budget for future redrafts
         "hit_cost": HIT_COST_DEFAULT,
-        "max_hit": 0,                         # change this to allow hits by default
+        "max_hit": 0,
     }
 
     save_state(user_id, st.session_state.auto_mgr)
 
-def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFrame,
-                              model_name: str, extra_instructions: str | None = None):
+def run_ai_auto_until_current(
+    user_id: str,
+    kb_meta: dict,
+    players_df: pd.DataFrame,
+    model_name: str,
+    extra_instructions: str | None = None
+):
     """
-    Advance from last_gw_processed+1 → current GW.
+    Advance from last_gw_processed+1 → current GW (codes).
     FT accrual happens at the START of each GW (except GW1) and only once per GW.
     """
     if "auto_mgr" not in st.session_state:
@@ -399,6 +503,11 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
     gw_now = kb_meta.get("gw")
     if not gw_now or not state.get("squad"):
         return
+
+    # mappings (prefer kb_meta, fallback to players_df)
+    code_to_id = {int(k): int(v) for k, v in (kb_meta.get("code_to_id") or {}).items()}
+    if not code_to_id:
+        code_to_id, _ = _ensure_maps(players_df)
 
     if state.get("last_gw_processed") is None:
         state["last_gw_processed"] = int(gw_now) - 1
@@ -423,18 +532,17 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
             state,
             model_name,
             gw,
-            extra_instructions=extra_instructions if gw == gw_now else None,  # only apply to this run's current GW
+            extra_instructions=extra_instructions if gw == gw_now else None,
         )
         if dec.get("error"):
             break
 
-        # --- MULTI-TRANSFER application ---
+        # --- MULTI-TRANSFER application (codes) ---
         transfers = dec.get("transfers") or []
         ok, msg, new_bank, new_squad = _validate_transfers(
             players_df, state["squad"], state["bank"], transfers
         )
         if not ok:
-            # reject this week; don't log incomplete decision
             break
 
         # Points hit
@@ -444,7 +552,7 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         points_hit = max(0, t_count - free_now) * hit_cost
 
         # Optional cap on hits
-        max_hit = int(state.get("max_hit", 1000))  # default effectively unlimited
+        max_hit = int(state.get("max_hit", 1000))
         if points_hit > max_hit:
             break  # reject plan that exceeds allowed hit
 
@@ -455,15 +563,15 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         consumed_fts = min(t_count, free_now)
         state["free_transfers"] = max(0, free_now - consumed_fts)
 
-        # --- XI/bench validation ---
-        xi_ids = list(map(int, dec.get("xi_ids") or []))
-        bench_order = list(map(int, dec.get("bench_order") or dec.get("bench_ids") or []))
-        ok, why = _validate_lineup(players_df, state["squad"], xi_ids, bench_order)
+        # --- XI/bench validation (codes) ---
+        xi_codes = list(map(int, dec.get("xi_codes") or []))
+        bench_codes = list(map(int, dec.get("bench_codes") or dec.get("bench_order") or []))
+        ok, why = _validate_lineup(players_df, state["squad"], xi_codes, bench_codes)
         if not ok:
             break
 
-        cap_id = int(dec.get("captain_id") or 0)
-        if cap_id not in xi_ids:
+        cap_code = int(dec.get("captain_code") or 0)
+        if cap_code not in xi_codes:
             break
 
         chip = dec.get("chip", "NONE")
@@ -472,7 +580,7 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         if chip in ("TC", "BB") and not state["chips"].get(chip, False):
             chip = "NONE"
 
-        pts = _compute_points(xi_ids, cap_id, bench_order, gw, chip) - points_hit
+        pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id) - points_hit
 
         if chip in ("TC", "BB"):
             state["chips"][chip] = False
@@ -480,16 +588,16 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         entry = {
             "gw": int(gw),
             "made": bool(t_count > 0),
-            "transfers": [{"out": int(t["out_id"]), "in": int(t["in_id"])} for t in transfers],
+            "transfers": [{"out_code": int(t["out_code"]), "in_code": int(t["in_code"])} for t in transfers],
             "points_hit": int(points_hit),
             "chip": chip,
-            "xi_ids": xi_ids,
-            "bench_ids": bench_order,
-            "captain_id": cap_id,
+            "xi_codes": xi_codes,
+            "bench_codes": bench_codes,
+            "captain_code": cap_code,
             "points": int(pts),
             "bank": float(state["bank"]),
             "free_transfers": int(state["free_transfers"]),  # value AFTER this GW’s decision
-            "squad_ids": list(map(int, state["squad"])),
+            "squad_codes": list(map(int, state["squad"])),
             "reason": dec.get("reason", ""),
             "bench_reason": dec.get("bench_reason", ""),
             "transfer_reasons": dec.get("transfer_reasons", []),
@@ -500,8 +608,13 @@ def run_ai_auto_until_current(user_id: str, kb_meta: dict, players_df: pd.DataFr
         save_state(user_id, state)
         append_gw_log(user_id, gw, entry)
 
-def rewind_and_regenerate_current_gw(user_id: str, kb_meta: dict, players_df: pd.DataFrame,
-                                     model_name: str, extra_instructions: str | None = None):
+def rewind_and_regenerate_current_gw(
+    user_id: str,
+    kb_meta: dict,
+    players_df: pd.DataFrame,
+    model_name: str,
+    extra_instructions: str | None = None
+):
     """Set pointer back one and re-run a single GW (current), with optional user note."""
     if "auto_mgr" not in st.session_state:
         return False, "No state."
@@ -528,18 +641,24 @@ def rewind_and_regenerate_current_gw(user_id: str, kb_meta: dict, players_df: pd
     return True, "Regenerated."
 
 def refresh_logged_points(user_id: str) -> int:
-    """Recompute points for all logged GWs from official FPL history."""
+    """Recompute points for all logged GWs from official FPL history (codes → id)."""
     if "auto_mgr" not in st.session_state:
         return 0
     state = st.session_state.auto_mgr
+
+    # Prefer a mapping cached in session (e.g., from the last KB build), else rebuild from players_df if available
+    code_to_id = {}
+    if "kb_meta" in st.session_state and isinstance(st.session_state.kb_meta, dict):
+        code_to_id = {int(k): int(v) for k, v in (st.session_state.kb_meta.get("code_to_id") or {}).items()}
+
     updated = 0
     for entry in state.get("log", []):
         gw = int(entry["gw"])
-        xi_ids = list(map(int, entry.get("xi_ids", [])))
-        bench_ids = list(map(int, entry.get("bench_ids") or entry.get("bench_order") or []))
-        cap_id = int(entry.get("captain_id") or 0)
+        xi_codes = list(map(int, entry.get("xi_codes", [])))
+        bench_codes = list(map(int, entry.get("bench_codes") or entry.get("bench_order") or []))
+        cap_code = int(entry.get("captain_code") or 0)
         chip = entry.get("chip", "NONE")
-        new_pts = _compute_points(xi_ids, cap_id, bench_ids, gw, chip)
+        new_pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id)
         if new_pts != entry.get("points"):
             entry["points"] = int(new_pts)
             append_gw_log(user_id, gw, entry)  # upsert same PK (user_id, season, gw)
@@ -553,8 +672,8 @@ def force_redraft_gw1(
     kb_text: str,
     model_name: str,
     extra_instructions: str | None = None,
-) -> tuple[bool, str]:
-    """Re-draft a full legal 15 for GW1 using the LLM and replace state.squad (no FT cost)."""
+) -> Tuple[bool, str]:
+    """Re-draft a full legal 15 for GW1 using the LLM and replace state.squad (codes; no FT cost)."""
     if "auto_mgr" not in st.session_state:
         return False, "No state."
     state = st.session_state.auto_mgr
@@ -569,19 +688,24 @@ def force_redraft_gw1(
         model_name,
         budget=budget,
         extra_instructions=extra_instructions,
-        prior_squad_ids=state.get("squad") or None,   # let AI revise the previous 15
+        prior_squad_codes=state.get("squad") or None,   # let AI revise the previous 15
     )
     if obj.get("error"):
         return False, obj["error"]
 
-    ids = obj.get("squad_ids") or []
-    ok, why = _validate_initial(players_df, ids, budget)
+    # normalize to codes
+    codes = obj.get("squad_codes") or []
+    if (not codes) and obj.get("squad_ids") and "id" in players_df.columns:
+        _, id_to_code = _ensure_maps(players_df)
+        codes = [int(id_to_code.get(int(i), -1)) for i in obj["squad_ids"]]
+
+    ok, why = _validate_initial(players_df, codes, budget)
     if not ok:
         return False, f"redraft_invalid:{why}"
 
-    cost = float(players_df[players_df["id"].isin(ids)]["price"].sum())
+    cost = float(players_df[players_df["code"].isin(codes)]["price"].sum())
     # replace squad + bank; DO NOT change FTs or chips
-    state["squad"] = list(map(int, ids))
+    state["squad"] = list(map(int, codes))
     state["bank"]  = float(budget - cost)
     state.setdefault("free_transfers", 0)
     state.setdefault("chips", {"TC": True, "BB": True, "FH": True, "WC1": True, "WC2": True})
