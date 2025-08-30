@@ -8,8 +8,89 @@ from fpl.ai_manager.persist_db import save_state, append_gw_log
 
 import re, json
 from typing import Tuple, List, Dict, Any
+from copy import deepcopy
+from datetime import datetime, timezone
+import typing as _t
 
 # ---------- utils ----------
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+def _gw_deadline_utc(kb_meta: dict, gw: int) -> _t.Optional[datetime]:
+    """
+    Try to fetch the GW deadline (UTC) from kb_meta. If not present, return None.
+    You can optionally add 'deadline_utc' (for current GW) and/or 'deadlines' {gw: iso} in kb_meta.
+    """
+    if not isinstance(kb_meta, dict):
+        return None
+    # exact value for current gw
+    if kb_meta.get("deadline_utc"):
+        try:
+            # accept datetime or iso string
+            d = kb_meta["deadline_utc"]
+            return d if isinstance(d, datetime) else datetime.fromisoformat(str(d))
+        except Exception:
+            pass
+    # map of all deadlines
+    dmap = kb_meta.get("deadlines") or kb_meta.get("deadline_by_gw") or {}
+    if gw in dmap:
+        try:
+            d = dmap[gw]
+            return d if isinstance(d, datetime) else datetime.fromisoformat(str(d))
+        except Exception:
+            return None
+    return None
+
+def _ensure_checkpoint(state: dict, gw: int, kb_meta: dict) -> None:
+    """
+    Save a pre-decision snapshot for this GW (after FT accrual, before any transfers).
+    """
+    state.setdefault("checkpoints", {})
+    key = str(int(gw))
+    if key in state["checkpoints"]:
+        return  # already saved for this GW
+    snap = {
+        "gw": int(gw),
+        "when_utc": _utc_now().isoformat(),
+        "deadline_utc": (_gw_deadline_utc(kb_meta, gw) or None).isoformat() if _gw_deadline_utc(kb_meta, gw) else None,
+        "squad": list(map(int, state.get("squad", []))),
+        "bank": float(state.get("bank", 0.0)),
+        "free_transfers": int(state.get("free_transfers", 0)),
+        "chips": deepcopy(state.get("chips", {})),
+        "last_ft_accrual_gw": int(state.get("last_ft_accrual_gw", 0)),
+    }
+    state["checkpoints"][key] = snap
+
+def _restore_checkpoint_if_allowed(state: dict, gw: int, kb_meta: dict) -> tuple[bool, str]:
+    """
+    Restore the saved pre-decision snapshot for this GW if we're still before the deadline.
+    If kb_meta has no deadline, we allow restore (best effort).
+    """
+    snap = (state.get("checkpoints") or {}).get(str(int(gw)))
+    if not snap:
+        return False, "No checkpoint for this GW."
+
+    # enforce deadline if we have it
+    d_iso = snap.get("deadline_utc")
+    if d_iso:
+        try:
+            d = datetime.fromisoformat(d_iso)
+            if _utc_now() > d:
+                return False, "Deadline passed; keeping committed state."
+        except Exception:
+            pass  # if parsing fails, fall through and allow restore
+
+    # restore fields
+    state["squad"] = list(map(int, snap.get("squad", [])))
+    state["bank"] = float(snap.get("bank", 0.0))
+    state["free_transfers"] = int(snap.get("free_transfers", 0))
+    state["chips"] = deepcopy(snap.get("chips", {}))
+    state["last_ft_accrual_gw"] = int(snap.get("last_ft_accrual_gw", 0))
+    return True, "Restored pre-decision snapshot."
+
+
 def _json_from_text(s: str) -> dict:
     m = re.search(r"\{.*\}", s, re.S)
     if not m:
@@ -586,8 +667,10 @@ def run_ai_auto_until_current(
 
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
             state["free_transfers"] = min(5, state["free_transfers"] + 1)
-            state["reset_transfers"]=min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
+
+        # Save checkpoint for this GW
+        _ensure_checkpoint(state, gw, kb_meta)
 
         dec = weekly_decision(
             players_df,
@@ -684,7 +767,7 @@ def rewind_and_regenerate_current_gw(
     extra_instructions: str | None = None
 ):
     """Set pointer back one and re-run a single GW (current), with optional user note."""
-    if "auto_mgr" not in st.session_state:
+   if "auto_mgr" not in st.session_state:
         return False, "No state."
     state = st.session_state.auto_mgr
     gw_now = kb_meta.get("gw")
@@ -693,9 +776,12 @@ def rewind_and_regenerate_current_gw(
     if not state.get("squad"):
         return False, "No squad."
 
+    # Restore pre-decision snapshot if allowed (deadline-aware)
+    restored, why = _restore_checkpoint_if_allowed(state, int(gw_now), kb_meta)
+
+    # Remove in-memory log for gw_now (DB history is immutable)
     state["log"] = [e for e in state["log"] if int(e.get("gw", -1)) != int(gw_now)]
     state["last_gw_processed"] = int(gw_now) - 1
-    state["free_transfers"]=state["reset_transfers"].copy()
     save_state(user_id, state)
 
     run_ai_auto_until_current(
@@ -705,7 +791,8 @@ def rewind_and_regenerate_current_gw(
         model_name=model_name,
         extra_instructions=extra_instructions,
     )
-    return True, "Regenerated."
+    return True, ("Regenerated." + (f" {why}" if restored else ""))
+
 
 # ---------- refresh points (robust codes→id) ----------
 def _best_code_to_id(
