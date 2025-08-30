@@ -18,7 +18,21 @@ def _json_from_text(s: str) -> dict:
         return json.loads(m.group(0))
     except Exception:
         return {}
-
+def _snapshot(players_df: pd.DataFrame, codes: list[int]) -> list[dict]:
+    """Return a compact, UI-friendly snapshot for the given 15/11/bench (by CODE)."""
+    if not codes:
+        return []
+    cols = ["code","web_name","team_short","pos","price","status","form","points_per_game"]
+    missing = [c for c in ["code","web_name","team_short","pos","price"] if c not in players_df.columns]
+    if missing:
+        return []
+    sub = players_df[players_df["code"].isin(list(map(int, codes)))].copy()
+    if sub.empty:
+        return []
+    keep = [c for c in cols if c in sub.columns]
+    sub = sub[keep].sort_values(["pos","web_name"])
+    # records for Streamlit UI
+    return sub.to_dict(orient="records")
 def _ensure_maps(players_df: pd.DataFrame) -> Tuple[Dict[int,int], Dict[int,int]]:
     """
     Returns (code_to_id, id_to_code) from players_df (expects both 'code' and 'id' cols).
@@ -627,6 +641,11 @@ def run_ai_auto_until_current(
         if chip in ("TC", "BB"):
             state["chips"][chip] = False
 
+        # after you have new_squad, xi_codes, bench_codes, cap_code, etc.
+        snap_after  = _snapshot(players_df, new_squad)
+        snap_xi     = _snapshot(players_df, xi_codes)
+        snap_bench  = _snapshot(players_df, bench_codes)
+        
         entry = {
             "gw": int(gw),
             "made": bool(t_count > 0),
@@ -639,11 +658,17 @@ def run_ai_auto_until_current(
             "points": int(pts),
             "bank": float(state["bank"]),
             "free_transfers": int(state["free_transfers"]),
-            "squad_codes": list(map(int, state["squad"])),
+            "squad_codes": list(map(int, state["squad"])),  # post-transfer 15
             "reason": dec.get("reason", ""),
             "bench_reason": dec.get("bench_reason", ""),
             "transfer_reasons": dec.get("transfer_reasons", []),
+        
+            # 🆕 snapshots for UI
+            "snapshot_15": snap_after,     # full 15 after transfers
+            "snapshot_xi": snap_xi,
+            "snapshot_bench": snap_bench,
         }
+
         state["log"].append(entry)
         state["last_gw_processed"] = gw
 
