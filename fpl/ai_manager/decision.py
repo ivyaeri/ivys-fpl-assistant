@@ -766,7 +766,7 @@ def rewind_and_regenerate_current_gw(
     model_name: str,
     extra_instructions: str | None = None
 ):
-    """Set pointer back one and re-run a single GW (current), with optional user note."""
+   """Set pointer back one and re-run a single GW (current), with optional user note."""
    if "auto_mgr" not in st.session_state:
         return False, "No state."
     state = st.session_state.auto_mgr
