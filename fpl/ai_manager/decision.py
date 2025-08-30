@@ -671,6 +671,17 @@ def run_ai_auto_until_current(
 
         # Save checkpoint for this GW
         _ensure_checkpoint(state, gw, kb_meta)
+        prev = next((e for e in state.get("log", []) if int(e.get("gw", -1)) == int(gw) - 1), None)
+        if prev and prev.get("squad_codes"):
+            prev_squad = set(map(int, prev["squad_codes"]))
+            cp_key = str(int(gw))
+            cp_squad = set(map(int, state["checkpoints"][cp_key]["squad"]))
+            drift_add = list(cp_squad - prev_squad)
+            drift_del = list(prev_squad - cp_squad)
+            if drift_add or drift_del:
+                # auto-restore baseline
+                state["squad"] = sorted(prev_squad)
+                state["checkpoints"][cp_key]["squad"] = state["squad"]
 
         dec = weekly_decision(
             players_df,
@@ -687,6 +698,12 @@ def run_ai_auto_until_current(
         ok, msg, new_bank, new_squad = _validate_transfers(
             players_df, state["squad"], state["bank"], transfers
         )
+        before = set(map(int, state["checkpoints"][str(int(gw))]["squad"]))
+        after  = set(map(int, new_squad))
+        expected_changes = 2 * len(transfers)  # each swap adds +1 and removes +1
+        if len(before ^ after) != expected_changes:
+            # bail out (or log & skip committing this GW)
+            break
         if not ok:
             break
 
