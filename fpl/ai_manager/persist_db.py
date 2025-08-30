@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from datetime import datetime
 
 from sqlalchemy import create_engine, Integer, String, DateTime, JSON, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
@@ -19,7 +20,7 @@ except Exception:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SQLITE_PATH = REPO_ROOT / "data" / "fpl_local.db"
 DEFAULT_SQLITE_URL = f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
-print(DEFAULT_SQLITE_PATH,DEFAULT_SQLITE_URL )
+
 DATABASE_URL = (
     os.getenv("DATABASE_URL")
     or CONFIG_DB_URL
@@ -32,25 +33,26 @@ IS_SQLITE = DATABASE_URL.startswith("sqlite:///")
 if IS_SQLITE:
     DEFAULT_SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# ---- Engine config: SQLite (local) vs Neon/Postgres ----
+# ---- Engine config: SQLite (local) vs Supabase/Postgres ----
 if IS_SQLITE:
     # Streamlit-friendly sqlite: allow cross-thread use of the same connection
-    print(DATABASE_URL)
     engine = create_engine(
         DATABASE_URL,
         future=True,
         pool_pre_ping=True,
         connect_args={"check_same_thread": False},
     )
-# else:
-#     # Neon/Postgres-friendly small pool
-#     engine = create_engine(
-#         DATABASE_URL,
-#         future=True,
-#         pool_pre_ping=True,
-#         pool_size=5,
-#         max_overflow=0,
-#     )
+else:
+    # Supabase Postgres-friendly small pool
+    # Ensure your DATABASE_URL includes sslmode=require
+    # e.g. postgresql+psycopg2://postgres:PASS@db.<ref>.supabase.co:5432/postgres?sslmode=require
+    engine = create_engine(
+        DATABASE_URL,
+        future=True,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=2,
+    )
 
 class Base(DeclarativeBase):
     pass
@@ -59,22 +61,27 @@ class SeasonState(Base):
     __tablename__ = "season_states"
     user_id: Mapped[str] = mapped_column(String, primary_key=True)
     season:  Mapped[str] = mapped_column(String, primary_key=True, default=SEASON)
-    state:   Mapped[dict] = mapped_column(JSON, nullable=False)
+    state:   Mapped[dict] = mapped_column(JSON, nullable=False)  # maps to JSON (SQLite) / JSONB (PG)
     # SQLite doesn't have TZ; func.now() is fine for both backends
-    updated_at: Mapped[str] = mapped_column(DateTime(timezone=True),
-                                            server_default=func.now(),
-                                            onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
 
 class GwLog(Base):
     __tablename__ = "gw_logs"
     user_id: Mapped[str] = mapped_column(String, primary_key=True)
     season:  Mapped[str] = mapped_column(String, primary_key=True, default=SEASON)
     gw:      Mapped[int] = mapped_column(Integer, primary_key=True)
-    entry:   Mapped[dict] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    entry:   Mapped[dict] = mapped_column(JSON, nullable=False)  # JSON/JSONB
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
 
 def init_db() -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist (SQLite or Postgres)."""
     Base.metadata.create_all(engine)
 
 def load_state(user_id: str, season: str = SEASON) -> Optional[dict]:
@@ -83,6 +90,7 @@ def load_state(user_id: str, season: str = SEASON) -> Optional[dict]:
         return row.state if row else None
 
 def save_state(user_id: str, state: dict, season: str = SEASON) -> None:
+    """Upsert a user's season state."""
     with Session(engine) as s:
         row = s.get(SeasonState, {"user_id": user_id, "season": season})
         if row:
@@ -93,6 +101,7 @@ def save_state(user_id: str, state: dict, season: str = SEASON) -> None:
         s.commit()
 
 def append_gw_log(user_id: str, gw: int, entry: dict, season: str = SEASON) -> None:
+    """Upsert a GW log entry (PK: user_id, season, gw)."""
     with Session(engine) as s:
         s.merge(GwLog(user_id=user_id, season=season, gw=gw, entry=entry))
         s.commit()
