@@ -586,6 +586,7 @@ def run_ai_auto_until_current(
 
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
             state["free_transfers"] = min(5, state["free_transfers"] + 1)
+            state["reset_transfers"]=min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
 
         dec = weekly_decision(
@@ -694,6 +695,7 @@ def rewind_and_regenerate_current_gw(
 
     state["log"] = [e for e in state["log"] if int(e.get("gw", -1)) != int(gw_now)]
     state["last_gw_processed"] = int(gw_now) - 1
+    state["free_transfers"]=state["reset_transfers"].copy()
     save_state(user_id, state)
 
     run_ai_auto_until_current(
