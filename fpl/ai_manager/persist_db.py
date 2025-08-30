@@ -27,26 +27,26 @@ DATABASE_URL = (
     or DEFAULT_SQLITE_URL
 )
 
-IS_SQLITE = DATABASE_URL.startswith("sqlite:///")
+# IS_SQLITE = DATABASE_URL.startswith("sqlite:///")
 
-# Ensure parent directory exists (for local SQLite)
-if IS_SQLITE:
-    DEFAULT_SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+# # Ensure parent directory exists (for local SQLite)
+# if IS_SQLITE:
+#     DEFAULT_SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# ---- Engine config: SQLite (local) vs Supabase/Postgres ----
-if IS_SQLITE:
-    # Streamlit-friendly sqlite: allow cross-thread use of the same connection
-    engine = create_engine(
-        DATABASE_URL,
-        future=True,
-        pool_pre_ping=True,
-        connect_args={"check_same_thread": False},
-    )
-else:
-    # Supabase Postgres-friendly small pool
-    # Ensure your DATABASE_URL includes sslmode=require
-    # e.g. postgresql+psycopg2://postgres:PASS@db.<ref>.supabase.co:5432/postgres?sslmode=require
-    engine = create_engine(
+# # ---- Engine config: SQLite (local) vs Supabase/Postgres ----
+# if IS_SQLITE:
+#     # Streamlit-friendly sqlite: allow cross-thread use of the same connection
+#     engine = create_engine(
+#         DATABASE_URL,
+#         future=True,
+#         pool_pre_ping=True,
+#         connect_args={"check_same_thread": False},
+#     )
+# else:
+#     # Supabase Postgres-friendly small pool
+#     # Ensure your DATABASE_URL includes sslmode=require
+#     # e.g. postgresql+psycopg2://postgres:PASS@db.<ref>.supabase.co:5432/postgres?sslmode=require
+engine = create_engine(
         DATABASE_URL,
         future=True,
         pool_pre_ping=True,
