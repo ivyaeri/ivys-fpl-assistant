@@ -489,33 +489,90 @@ def weekly_decision(
         "You are an autonomous FPL manager. "
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
-    usr = f"""
-Weekly decision for GW {gw}.
+    usr = usr = f"""
+Weekly FPL decision for GW {gw} - MAXIMIZE POINTS through strategic analysis.
 
-Resources:
-- Free transfers available: {state['free_transfers']}
+CURRENT RESOURCES:
+- Free transfers: {state['free_transfers']}
 - Bank: £{state['bank']:.1f}m
-- Chips available: {chips} (only 'TC' or 'BB' allowed here)
-- Constraints: ≤3 per club; stay under budget; like-for-like by position; valid XI (1 GK; allowed formations: {{3-4-3,3-5-2,4-4-2,4-3-3,5-3-2,5-4-1}})
-- Pick XI, set bench order (4 codes; 1st = first sub), choose a captain in the XI.
+- Available chips: {chips} (TC/BB only)
 
-CURRENT 15 (by CODE):
+CONSTRAINTS:
+- Max 3 players per club
+- Stay within budget (bank + sale values)
+- Like-for-like position swaps only
+- Valid XI: 1 GK + formation from {{3-4-3, 3-5-2, 4-4-2, 4-3-3, 5-3-2, 5-4-1}}
+
+CURRENT SQUAD (15 players by CODE):
 {table}
+
+ANALYSIS FRAMEWORK - Consider ALL factors:
+
+1. FIXTURE ANALYSIS:
+   - Difficulty ratings (1=easiest, 5=hardest) for next 3-5 GWs
+   - Home/away advantage
+   - Double gameweeks or blanks coming up
+   - Historical performance vs upcoming opponents
+
+2. FORM & MOMENTUM:
+   - Points in last 3-5 GWs
+   - Expected vs actual points (xG, xA, xCS)
+   - Underlying stats trend
+   - Minutes played consistency
+   - Injury/rotation risk
+
+3. OWNERSHIP & VALUE:
+   - Template vs differential picks
+   - Price changes (rising/falling)
+   - Most/least owned in top 10k
+   - Value for money (points per £m)
+
+4. BUDGET OPTIMIZATION:
+   - Best performers under £5m, £6m, £7m by position
+   - Enablers vs premium balance
+   - Transfer value vs keeping bank for future
+
+5. POSITIONAL PRIORITIES:
+   - GK: Clean sheet probability, save points, penalty save history
+   - DEF: Clean sheets + attacking returns, bonus magnet
+   - MID: Goals/assists potential, set pieces, penalty taker
+   - FWD: Goal threat, fixture run, supporting cast
 
 KNOWLEDGE BASE:
 {kb_text}
-""" + (f"\nMANAGER NOTE:\n{note}\n" if note else "") + """
-Return JSON ONLY (schema EXACTLY):
-{
+
+MANAGER INSTRUCTIONS:
+{note if note else "Focus on highest expected points for GW" + str(gw)}
+
+DECISION REQUIREMENTS:
+- Justify each transfer with specific reasoning (form/fixtures/value/expected stats)
+- XI selection based on highest point probability for GW{gw}
+- Bench order: strongest bench player first (likely to play/score)
+- Captain: highest ceiling player with good fixture (consider differentials for rank moves)
+- Vice-captain strategy: safe backup or double-up protection
+- Consider chip usage if significant advantage (TC for double/easy fixture, BB for deep squad)
+- Flag any template fades or differential punts with reasoning
+
+RISK ASSESSMENT:
+- Highlight rotation risks and injury concerns
+- Identify players due for regression (over/under-performing xG/xA)
+- Note any tactical or personnel changes affecting players
+- Consider downside scenarios for each major decision
+
+Return JSON ONLY (exact schema):
+{{
   "chip": "NONE" | "TC" | "BB",
-  "transfers": [{"out_code": <int>, "in_code": <int>}],
+  "transfers": [{{"out_code": <int>, "in_code": <int>}}],
   "xi_codes": [11 ints],
   "bench_codes": [4 ints],
   "captain_code": <int>,
-  "reason": "<short rationale>",
-  "transfer_reasons": ["<t1>", "..."],
-  "bench_reason": "<why this bench order>"
-}
+  "vice_captain_code": <int>,
+  "reason": "<comprehensive rationale covering key factors and risk assessment>",
+  "transfer_reasons": ["<specific reason for each transfer including form/fixtures/value/expected stats>"],
+  "bench_reason": "<justification for bench order based on likelihood to play/score>",
+  "risks": "<key risks and mitigation strategies>",
+  "differentials": ["<any differential picks and reasoning>"]
+}}
 """
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     obj = _json_from_text(raw)
