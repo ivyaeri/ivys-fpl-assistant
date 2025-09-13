@@ -22,3 +22,15 @@ def fetch_player_history(player_id: int):
     r = requests.get(f"{FPL_API}/element-summary/{player_id}/")
     r.raise_for_status()
     return r.json()
+
+@lru_cache(maxsize=512)
+def fetch_event_live(gw: int) -> dict:
+    """
+    Fetch official per-player stats for a specific gameweek (live or finished).
+    gw: int - the gameweek number (1-based)
+    Returns JSON dict with "elements": list of players.
+    """
+    url = f"{BASE_URL}/event/{gw}/live/"
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
