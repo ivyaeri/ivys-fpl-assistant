@@ -351,13 +351,16 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
 
         with st.expander(" — ".join(header_bits), expanded=(entry.get("gw") == gw_now)):
             # --- Budget summary (engine vs model)
-            mfb = entry.get("final_bank_model", None)
-            cols_meta = st.columns(4)
+            cap_name  = _pname_by_code(players_df, entry.get("captain_code")) if entry.get("captain_code") else "—"
+            vice_name = _pname_by_code(players_df, entry.get("vice_captain_code")) if entry.get("vice_captain_code") else "—"
+            
+            cols_meta = st.columns(5)
             cols_meta[0].metric("Points", entry.get("points", 0))
             cols_meta[1].metric("Points hit", entry.get("points_hit", 0))
             cols_meta[2].metric("Chip", chip)
-            cols_meta[3].metric("Vice captain",
-                                _pname_by_code(players_df, entry.get("vice_captain_code")) if entry.get("vice_captain_code") else "—")
+            cols_meta[3].metric("Captain", cap_name)
+            cols_meta[4].metric("Vice captain", vice_name)
+
 
             cols_bank = st.columns(2)
             cols_bank[0].markdown(f"**Engine bank (post-transfers):** £{float(entry.get('bank', 0.0)):.1f}m")
@@ -437,6 +440,11 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             bench_codes = entry.get("bench_codes") or []
             cap_code    = int(entry.get("captain_code") or 0)
             vice_code   = int(entry.get("vice_captain_code") or 0)
+            # Bench order (names), in exact order from bench_codes
+            if bench_codes:
+                bench_names = [_pname_by_code(players_df, c) for c in bench_codes]
+                st.caption("Bench order: " + " → ".join(map(str, bench_names)))
+
 
             week = _df_from_snapshot_list(entry.get("snapshot_15") or [])
             if week.empty:
