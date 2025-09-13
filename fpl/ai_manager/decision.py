@@ -749,18 +749,7 @@ Return EXACTLY this JSON shape (all keys required):
 - transfer_reasons aligns one-to-one (same order) with transfers.
 - final_bank computed from listed transfers using prices in the Squad table; ≥ 0.0.
 - budget_efficiency_score is an integer 1–10 (≥ 8 if you keep >£1.0m, justify in budget_optimization).
-
-EXCELLENCE STANDARDS:
-- Every transfer must improve expected points
-- Budget efficiency score must be 8+/10
-- Justify ANY bank over £1.0m 
-- Consider 2-3 alternative strategies before deciding
-- Account for upcoming price changes
-- Balance risk vs reward for rank movement
 """
-
-
-
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     obj = _json_from_text(raw)
     if not obj:
@@ -989,10 +978,13 @@ def run_ai_auto_until_current(
             st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] Lineup invalid: {why}")
             break
 
-        cap_code = int(dec.get("captain_code") or 0)
+        cap_code  = int(dec.get("captain_code") or 0)
+        vice_code = int(dec.get("vice_captain_code") or 0)
         if cap_code not in xi_codes:
             st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] Captain not in XI; aborting.")
             break
+        if vice_code and vice_code not in xi_codes:
+            st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] Vice not in XI; continuing, but check prompt.")
 
         chip = (dec.get("chip") or "NONE").upper()
         if chip not in ("NONE", "TC", "BB"):
@@ -1010,12 +1002,52 @@ def run_ai_auto_until_current(
         snap_xi     = _snapshot(players_df, xi_codes)
         snap_bench  = _snapshot(players_df, bench_codes)
 
-        # Align keys with prompt output (aliases)
+        # ---- Gather ALL JSON fields the model returned ----
+        # legacy/UI keys with aliases
         reason = dec.get("reason") or dec.get("strategy_summary") or ""
         bench_reason = dec.get("bench_reason") or dec.get("bench_strategy") or ""
-        transfer_reasons = dec.get("transfer_reasons") or dec.get("transfer_breakdown") or []
+
+        # normalize transfer_reasons -> list[str]
+        transfer_reasons = dec.get("transfer_reasons")
+        if not (isinstance(transfer_reasons, list) and all(isinstance(x, str) for x in transfer_reasons or [])):
+            transfer_reasons = []
+            for x in dec.get("transfer_breakdown") or []:
+                if isinstance(x, dict):
+                    outn = x.get("out") or x.get("out_name") or x.get("out_code") or "?"
+                    inn  = x.get("in")  or x.get("in_name")  or x.get("in_code")  or "?"
+                    why  = x.get("reason") or x.get("rationale") or ""
+                    ri   = x.get("risk_level") or x.get("risk") or ""
+                    s = f"{outn} → {inn}"
+                    if why: s += f": {why}"
+                    if ri:  s += f" (risk {ri})"
+                    transfer_reasons.append(s)
+                else:
+                    transfer_reasons.append(str(x))
+
+        # rich analysis fields
+        strategy_summary        = dec.get("strategy_summary")
+        budget_optimization     = dec.get("budget_optimization")
+        fixture_leverage        = dec.get("fixture_leverage")
+        form_rationale          = dec.get("form_rationale")
+        differentials           = dec.get("differentials")
+        template_stance         = dec.get("template_stance")
+        transfer_breakdown_raw  = dec.get("transfer_breakdown") or []
+        xi_justification        = dec.get("xi_justification")
+        captain_logic           = dec.get("captain_logic")
+        bench_strategy          = dec.get("bench_strategy")
+        key_risks               = dec.get("key_risks")
+        next_gw_setup           = dec.get("next_gw_setup")
+        model_final_bank        = dec.get("final_bank")
+        budget_efficiency_score = dec.get("budget_efficiency_score")
+
+        # coerce model_final_bank if possible (store both declared & computed)
+        try:
+            model_final_bank = float(model_final_bank)
+        except Exception:
+            model_final_bank = None
 
         entry = {
+            "schema_version": "v2",
             "gw": int(gw),
             "made": bool(t_count > 0),
             "transfers": [{"out_code": int(t["out_code"]), "in_code": int(t["in_code"])} for t in transfers],
@@ -1024,13 +1056,32 @@ def run_ai_auto_until_current(
             "xi_codes": xi_codes,
             "bench_codes": bench_codes,
             "captain_code": cap_code,
+            "vice_captain_code": vice_code,
             "points": int(pts),
-            "bank": float(state["bank"]),
+            "bank": float(state["bank"]),  # bank after applying transfers
             "free_transfers": int(state["free_transfers"]),
             "squad_codes": list(map(int, state["squad"])),  # post-transfer 15
+
+            # legacy + normalized
             "reason": reason,
             "bench_reason": bench_reason,
             "transfer_reasons": transfer_reasons,
+
+            # full analysis payload from model
+            "strategy_summary": strategy_summary,
+            "budget_optimization": budget_optimization,
+            "fixture_leverage": fixture_leverage,
+            "form_rationale": form_rationale,
+            "differentials": differentials,
+            "template_stance": template_stance,
+            "transfer_breakdown": transfer_breakdown_raw,
+            "xi_justification": xi_justification,
+            "captain_logic": captain_logic,
+            "bench_strategy": bench_strategy,
+            "key_risks": key_risks,
+            "next_gw_setup": next_gw_setup,
+            "final_bank_model": model_final_bank,
+            "budget_efficiency_score": budget_efficiency_score,
 
             # snapshots for UI
             "snapshot_15": snap_after,
