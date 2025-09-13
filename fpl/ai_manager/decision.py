@@ -1148,55 +1148,50 @@ def refresh_logged_points(
     players_df: pd.DataFrame | None = None,
     kb_meta: dict | None = None,
 ) -> int:
-    """Recompute points for all logged GWs from official FPL history (works for legacy id logs too).
-       Keeps points_hit subtraction consistent with run-time computation.
+    """
+    Recompute points for all logged GWs using historical per-GW data
+    (stored in st.session_state["gw_history"]). 
+    Once a GW is locked, don't overwrite it again.
     """
     if "auto_mgr" not in st.session_state:
         return 0
     state = st.session_state.auto_mgr
 
-    # 1) Make sure we fetch fresh history (avoid stale LRU cache)
-    try:
-        _history_for_player.cache_clear()  # type: ignore[attr-defined]
-    except Exception:
-        pass
-
-    # 2) Build the most reliable code->id map available
-    code_to_id = _best_code_to_id(players_df, kb_meta or st.session_state.get("kb_meta"))
-    if not code_to_id and players_df is not None:
-        # Last-ditch: try to build from players_df if possible
-        if "code" in players_df.columns and "id" in players_df.columns:
-            try:
-                code_to_id = {int(c): int(i) for c, i in zip(players_df["code"], players_df["id"])}
-            except Exception:
-                code_to_id = {}
-    if not code_to_id:
-        # Without this map, we cannot compute points; bail early
-        st.warning("refresh_logged_points: missing code_to_id mapping; no points updated.")
-        return 0
-
-    id_to_code = {v: k for k, v in code_to_id.items()}
-    def ids_to_codes(lst):
-        out = []
-        for x in lst or []:
-            try:
-                xi = int(x)
-                out.append(int(id_to_code.get(xi, xi)))
-            except Exception:
-                pass
-        return out
+    # Historical GW datasets
+    gw_history: dict[int, pd.DataFrame] = st.session_state.get("gw_history", {})
 
     updated = 0
     for entry in state.get("log", []):
         gw = int(entry.get("gw", 0))
-        if gw <= 0:
+        if not gw:
             continue
 
-        # Prefer codes; fall back to legacy ids if needed
+        # Skip if locked already
+        if entry.get("points_locked", False):
+            continue
+
+        # Pick dataset for this GW
+        gw_players = gw_history.get(gw) or players_df
+        if gw_players is None:
+            continue
+
+        # Build code→id mapping for that GW
+        code_to_id = _best_code_to_id(gw_players, kb_meta or st.session_state.get("kb_meta"))
+        id_to_code = {v: k for k, v in code_to_id.items()} if code_to_id else {}
+
+        def ids_to_codes(lst):
+            out = []
+            for x in lst or []:
+                try:
+                    xi = int(x)
+                    out.append(int(id_to_code.get(xi, xi)))
+                except Exception:
+                    pass
+            return out
+
         xi_codes    = list(map(int, entry.get("xi_codes") or ids_to_codes(entry.get("xi_ids"))))
         bench_codes = list(map(int, entry.get("bench_codes") or ids_to_codes(entry.get("bench_ids") or entry.get("bench_order"))))
-
-        cap_code = entry.get("captain_code")
+        cap_code    = entry.get("captain_code")
         if cap_code is None and entry.get("captain_id") is not None:
             cap_code = id_to_code.get(int(entry["captain_id"]), 0)
         cap_code = int(cap_code or 0)
@@ -1204,15 +1199,16 @@ def refresh_logged_points(
         chip = (entry.get("chip") or "NONE").upper()
         points_hit = int(entry.get("points_hit", 0))
 
-        # 3) Compute new points from official player histories for THAT GW
+        # Compute points from correct GW dataset
         new_pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id) - points_hit
 
-        # 4) If different, update the entry and persist
+        # Update and lock
         if int(entry.get("points", -999999)) != int(new_pts):
             entry["points"] = int(new_pts)
             entry["xi_codes"] = xi_codes
             entry["bench_codes"] = bench_codes
             entry["captain_code"] = cap_code
+            entry["points_locked"] = True
             append_gw_log(user_id, gw, entry)
             updated += 1
 
@@ -1220,22 +1216,23 @@ def refresh_logged_points(
     return updated
 
 
+
 def force_redraft_gw1(
     user_id: str,
     players_df: pd.DataFrame,
     kb_text: str,
+) -> Tuple[bool, str]:
     model_name: str,
     extra_instructions: str | None = None,
-) -> Tuple[bool, str]:
     """Re-draft a full legal 15 for GW1 using the LLM and replace state.squad (codes; no FT cost)."""
     if "auto_mgr" not in st.session_state:
         return False, "No state."
     state = st.session_state.auto_mgr
     budget = float(state.get("budget", 100.0))
 
+
     if not st.session_state.openai_key:
         return False, "no_api"
-
     obj = draft_initial_squad(
         players_df,
         kb_text,
@@ -1249,9 +1246,9 @@ def force_redraft_gw1(
 
     codes = obj.get("squad_codes") or []
     if (not codes) and obj.get("squad_ids") and "id" in players_df.columns:
+
         _, id_to_code = _ensure_maps(players_df)
         codes = [int(id_to_code.get(int(i), -1)) for i in obj["squad_ids"]]
-
     ok, why = _validate_initial(players_df, codes, budget)
     if not ok:
         return False, f"redraft_invalid:{why}"
