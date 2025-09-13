@@ -576,36 +576,115 @@ def weekly_decision(
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
     usr = f"""
-🏆 FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
+FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
 
 You are an elite FPL manager with deep statistical knowledge. Your goal: MAXIMIZE POINTS while building long-term value.
 
 ══════════ CURRENT STATE ══════════
-Squad (CSV): 
-{table}
-Bank: £{state['bank']:.1f}m | Free Transfers: {state['free_transfers']} | Chips available: {chips}
+Squad: {table}
+Bank: £{state['bank']:.1f}m | Free Transfers: {state['free_transfers']} | Chips: {chips}
 
 ══════════ CRITICAL SUCCESS FACTORS ══════════
 
-🎯 POINTS MAXIMIZATION HIERARCHY:
-1) Starting XI Strength
-2) Budget Optimization (≤£1.0m bank)
-3) Fixture Leverage (next 3–5 GWs)
-4) Form Over Fame
-5) Template Balance (safe vs differential)
+**POINTS MAXIMIZATION HIERARCHY:**
+1. **Starting XI Strength** - Your 11 must be point machines
+2. **Budget Optimization** - NEVER waste money in bank (max 1.0m buffer)
+3. **Fixture Leverage** - Target easiest opponents & attacking situations
+4. **Form Over Fame** - In-form £6m > Out-of-form £10m
+5. **Template Balance** - Mix of safe picks + differentials for rank moves
 
-📊 MANDATORY ANALYSIS CHECKLIST:
-- Fixture difficulty, home/away, defensive strength
-- Recent form, xG/xA vs actual, minutes reliability
-- Points per million, enablers, premium justification
-- Ownership (template vs differentials)
-- Positional specifics (GK saves, DEF attacking, MID set pieces, FWD big chances)
+**MANDATORY ANALYSIS CHECKLIST:**
+
+**FIXTURE INTELLIGENCE (Next 3-5 GWs):**
+- FDR ratings: 1-2 (green) = prioritize, 4-5 (red) = avoid
+- Home advantage vs defensive strength
+- Goals conceded trends (attack targets)
+- Clean sheet probability (defensive targets)
+
+**FORM & EXPECTED PERFORMANCE:**
+- Points last 3 GWs vs season average
+- xG/xA vs actual (over/underperformance)
+- Minutes played % (rotation risk)
+- Bonus point magnets (shots, key passes, defensive actions)
+
+**VALUE ENGINEERING:**
+- Points per million spent efficiency
+- Budget enablers performing above price point
+- Premium assets justifying cost vs cheaper alternatives
+- Price change momentum (rising/falling)
+
+**OWNERSHIP PSYCHOLOGY:**
+- Template players (safe but limited upside)
+- Differentials with explosive potential (5-15% owned)
+- Captaincy options beyond obvious choices
+- Anti-template opportunities (fading popular picks in bad fixtures)
+
+**POSITIONAL OPTIMIZATION:**
+- GK: Fixtures + save potential + penalty save history
+- DEF: Clean sheets + attacking returns + BPS potential  
+- MID: Goals/assists + set pieces + advanced positions
+- FWD: Shot volume + big chances + supporting cast quality
+
+**BUDGET MAXIMIZATION RULES:**
+- Bank should be £0.0-1.0m (emergency buffer only)
+- Every unused million = ~2-3 points lost per GW
+- Upgrade path: Identify weakest starter, find best replacement in budget
+- Value traps: Expensive benchwarmer vs playing budget option
+
+**STRATEGIC THINKING:**
+
+**Template Disruption:**
+- When template fails: Be contrarian on popular picks with bad fixtures
+- Differential captaincy: Target 5-20% owned in good spots
+- Rank climbing: Take calculated risks when behind
+
+**Risk Management:**
+- Rotation prone players before busy periods
+- Injury concerns from recent games/internationals
+- New signings adaptation period
+- Tactical changes affecting player roles
+
+**Long-term Setup:**
+- Building toward DGWs (2-3 GWs ahead)
+- Wildcard timing optimization
+- Team value growth through price rises
+
+══════════ DECISION FRAMEWORK ══════════
+
+**TRANSFER PRIORITY MATRIX:**
+1. Remove: Injured/suspended/not playing
+2. Remove: Playing but terrible fixtures (FDR 4-5)
+3. Remove: Expensive underperformers vs budget alternatives  
+4. Add: In-form players with great fixtures
+5. Add: Budget gems outperforming price point
+6. Add: Differentials with explosive upside
+
+**FORMATION SELECTION:**
+Choose based on your best 11 players, not rigid structures:
+- 3-5-2: Strong midfield, weak forward depth
+- 4-4-2: Balanced, two strong forwards
+- 3-4-3: Premium forward heavy
+- 5-4-1: Defensive fixtures, one premium forward
+
+**CAPTAINCY ALGORITHM:**
+1. Highest ceiling (goals/assists potential)
+2. Best fixture (FDR 1-2, home advantage)
+3. Current form (points last 3 GWs)
+4. Ownership consideration (template vs differential)
 
 KNOWLEDGE BASE:
 {kb_text}
 
 MANAGER DIRECTIVE:
 {note if note else f"Maximize GW{gw} points while optimizing budget usage"}
+
+🚨 **EXCELLENCE STANDARDS:**
+- Every transfer must improve expected points
+- Budget efficiency score must be 8+/10
+- Justify ANY bank over £1.0m 
+- Consider 2-3 alternative strategies before deciding
+- Account for upcoming price changes
+- Balance risk vs reward for rank movement
 
 ══════════ ELITE OUTPUT REQUIRED ══════════
 
