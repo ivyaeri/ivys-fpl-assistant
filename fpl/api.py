@@ -30,7 +30,7 @@ def fetch_event_live(gw: int) -> dict:
     gw: int - the gameweek number (1-based)
     Returns JSON dict with "elements": list of players.
     """
-    url = f"{BASE_URL}/event/{gw}/live/"
+    url = f"{FPL_API}/event/{gw}/live/"
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     return resp.json()
