@@ -20,16 +20,16 @@ def _maps(players_df: pd.DataFrame):
         return c2i, i2c
     return {}, {}
 
-def _pname_by_code(players_df: pd.DataFrame, code: int | None) -> str:
-    if not code:
+def _pname_by_code(players_df: pd.DataFrame, code) -> str:
+    if not code and code != 0:
         return "—"
     if "code" not in players_df.columns:
         return f"CODE {code}"
     row = players_df.loc[players_df["code"] == int(code)]
     return row["web_name"].iloc[0] if not row.empty else f"CODE {code}"
 
-def _pname_by_id(players_df: pd.DataFrame, pid: int | None) -> str:
-    if not pid:
+def _pname_by_id(players_df: pd.DataFrame, pid) -> str:
+    if not pid and pid != 0:
         return "—"
     if "id" not in players_df.columns:
         return f"ID {pid}"
@@ -40,9 +40,9 @@ def _snapshot_df(players_df: pd.DataFrame, codes: list[int]) -> pd.DataFrame:
     """Small table for the UI based on codes."""
     if "code" not in players_df.columns:
         return pd.DataFrame()
-    sub = players_df[players_df["code"].isin(list(map(int, codes)))].copy()
+    sub = players_df[players_df["code"].isin([int(c) for c in (codes or [])])].copy()
     if sub.empty:
-        return sub
+        return pd.DataFrame()
     cols = [
         "web_name","team_short","pos","price","form","status","selected_by","points_per_game","code"
     ]
@@ -54,7 +54,125 @@ def _df_from_snapshot_list(snapshot_list: list[dict]) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(snapshot_list)
     wanted = ["web_name","team_short","pos","price","form","status","points_per_game","code"]
-    return df[[c for c in wanted if c in df.columns]]
+    keep = [c for c in wanted if c in df.columns]
+    return df[keep] if keep else df
+
+def _canonicalize_entry(entry: dict, i2c: dict) -> dict:
+    """
+    Normalize an entry into a single canonical schema, regardless of old/new JSONs.
+    Produces keys: transfers(list[{out_code,in_code}]), xi_codes, bench_codes, captain_code,
+    squad_codes, reason, bench_reason, transfer_reasons(list[str]), chip, points_hit, points,
+    bank, free_transfers, plus snapshots/vice if present.
+    """
+    e = dict(entry or {})
+
+    # --- id->code helper
+    def _ids_to_codes(lst):
+        out = []
+        for x in lst or []:
+            try:
+                xi = int(x)
+                out.append(int(i2c.get(xi, xi)))
+            except Exception:
+                pass
+        return out
+
+    # 1) transfers -> list[{out_code,in_code}]
+    moves = e.get("transfers") or e.get("moves") or []
+    if isinstance(moves, dict):  # very old single-transfer
+        moves = [moves]
+    transfers = []
+    for mv in (moves or []):
+        if not isinstance(mv, dict):
+            continue
+        oc = mv.get("out_code")
+        ic = mv.get("in_code")
+        # legacy id keys
+        if oc is None and mv.get("out_id") is not None:
+            oc = i2c.get(int(mv["out_id"]), mv["out_id"])
+        if ic is None and mv.get("in_id") is not None:
+            ic = i2c.get(int(mv["in_id"]), mv["in_id"])
+        # very old ambiguous "out"/"in" (ids)
+        if oc is None and mv.get("out") is not None:
+            try: oc = i2c.get(int(mv["out"]), mv["out"])
+            except Exception: oc = mv["out"]
+        if ic is None and mv.get("in") is not None:
+            try: ic = i2c.get(int(mv["in"]), mv["in"])
+            except Exception: ic = mv["in"]
+        try:
+            transfers.append({"out_code": int(oc), "in_code": int(ic)})
+        except Exception:
+            # ignore if not numeric
+            pass
+    e["transfers"] = transfers
+
+    # 2) xi/bench to codes
+    xi_codes = e.get("xi_codes")
+    if not xi_codes and e.get("xi_ids"):
+        xi_codes = _ids_to_codes(e.get("xi_ids"))
+    bench_codes = e.get("bench_codes")
+    if not bench_codes:
+        bench_legacy = e.get("bench_ids") or e.get("bench_order") or []
+        bench_codes = _ids_to_codes(bench_legacy)
+    e["xi_codes"] = [int(x) for x in (xi_codes or [])]
+    e["bench_codes"] = [int(x) for x in (bench_codes or [])]
+
+    # 3) captain to code
+    cap = e.get("captain_code")
+    if cap is None and e.get("captain_id") is not None:
+        cap = i2c.get(int(e["captain_id"]), e["captain_id"])
+    try:
+        e["captain_code"] = int(cap or 0)
+    except Exception:
+        e["captain_code"] = 0
+
+    # 4) squad to codes
+    sc = e.get("squad_codes")
+    if not sc and e.get("squad_ids"):
+        sc = _ids_to_codes(e.get("squad_ids"))
+    e["squad_codes"] = [int(x) for x in (sc or [])]
+
+    # 5) reasons / breakdown normalization
+    reason = e.get("reason") or e.get("strategy_summary") or ""
+    bench_reason = e.get("bench_reason") or e.get("bench_strategy") or ""
+    tbreak = e.get("transfer_breakdown") or []
+    treasons = e.get("transfer_reasons")
+    if isinstance(treasons, list) and all(isinstance(x, str) for x in treasons):
+        transfer_reasons = treasons
+    else:
+        transfer_reasons = []
+        for x in (tbreak if isinstance(tbreak, list) else []):
+            if isinstance(x, dict):
+                outn = x.get("out") or x.get("out_name") or x.get("out_code") or "?"
+                inn  = x.get("in")  or x.get("in_name")  or x.get("in_code")  or "?"
+                why  = x.get("reason") or x.get("rationale") or ""
+                ri   = x.get("risk_level") or x.get("risk") or ""
+                s = f"{outn} → {inn}"
+                if why: s += f": {why}"
+                if ri:  s += f" (risk {ri})"
+                transfer_reasons.append(s)
+            else:
+                transfer_reasons.append(str(x))
+    e["reason"] = reason
+    e["bench_reason"] = bench_reason
+    e["transfer_reasons"] = transfer_reasons
+
+    # 6) chip normalization
+    chip = (e.get("chip") or "NONE").upper()
+    e["chip"] = chip if chip in ("NONE", "TC", "BB", "FH", "WC1", "WC2") else "NONE"
+
+    # 7) numeric hygiene (don’t explode if strings)
+    try: e["points_hit"] = int(e.get("points_hit", 0))
+    except Exception: e["points_hit"] = 0
+    try: e["points"] = int(e.get("points", 0))
+    except Exception: pass
+    try: e["free_transfers"] = int(e.get("free_transfers", 0))
+    except Exception: pass
+    try: e["bank"] = float(e.get("bank", 0.0))
+    except Exception: pass
+
+    # keep snapshots/vice if present (no transform needed)
+    return e
 
 # ---------- main ----------
 def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
@@ -78,7 +196,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                     ensure_initial_squad_with_ai(
                         user_id=user_id,
                         players_df=players_df,
-                        kb_text=st.session_state.get("full_kb", ""),  # robust
+                        kb_text=st.session_state.get("full_kb", ""),
                         model_name=MODEL_NAME,
                         budget=100.0,
                     )
@@ -117,7 +235,6 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             height=90,
             placeholder="Type any constraints or preferences…",
         )
-        # simple auto-redraft toggle for GW1 (always on if GW1)
         force_redraft_toggle = (gw_now == 1)
 
     colA, colB = st.columns([1, 3])
@@ -160,7 +277,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             st.success(f"Updated {n} gameweek(s).")
             st.rerun()
 
-    # ---------- Debug logs (from decision engine) ----------
+    # ---------- Debug logs from backend ----------
     if st.session_state.get("ai_mgr_logs"):
         with st.expander("Engine notes", expanded=False):
             for line in st.session_state.get("ai_mgr_logs", []):
@@ -172,9 +289,11 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
         st.info("No gameweeks processed yet.")
         return
 
-    for entry in sorted(logs, key=lambda x: x["gw"], reverse=True):
+    for raw_entry in sorted(logs, key=lambda x: x.get("gw", 0), reverse=True):
+        entry = _canonicalize_entry(raw_entry, i2c)
+
         header = [
-            f"GW {entry['gw']}",
+            f"GW {entry.get('gw', '?')}",
             f"Points: {entry.get('points', 0)}",
             f"Bank £{float(entry.get('bank', 0.0)):.1f}",
             f"FTs {int(entry.get('free_transfers', 0))}",
@@ -185,36 +304,31 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
         if entry.get("redraft"):
             header.append("Full redraft")
 
-        with st.expander(" — ".join(header), expanded=(entry["gw"] == gw_now)):
-            # --- Transfers: prefer code fields, fallback to legacy
-            moves = entry.get("transfers") or entry.get("moves") or []
-            if isinstance(moves, dict):  # very old single-transfer schema
-                moves = [moves]
-
+        with st.expander(" — ".join(header), expanded=(entry.get("gw") == gw_now)):
+            # --- Transfers (already canonical codes)
+            moves = entry.get("transfers") or []
             if not moves:
                 st.markdown("**No transfer made.**")
             else:
                 for mv in moves:
                     out_code = mv.get("out_code")
                     in_code  = mv.get("in_code")
-                    # legacy ids fallback
-                    if out_code is None and "out" in mv:
-                        out_id = mv["out"]
-                        out_code = i2c.get(int(out_id), out_id)
-                    if in_code is None and "in" in mv:
-                        in_id = mv["in"]
-                        in_code = i2c.get(int(in_id), in_id)
-                    st.markdown(f"**Transfer:** {_pname_by_code(players_df, out_code)} → {_pname_by_code(players_df, in_code)}")
+                    st.markdown(
+                        f"**Transfer:** {_pname_by_code(players_df, out_code)} → {_pname_by_code(players_df, in_code)}"
+                    )
 
-            # --- Reasons (new + legacy keys aligned in decision.py)
-            treasons = entry.get("transfer_reasons") or []
-            treasons_txt = ("; ".join(treasons)) if isinstance(treasons, list) else treasons
+            # --- Reasons
             st.markdown(f"**Reason (AI):** {entry.get('reason','')}")
             st.markdown(f"**Bench Reason (AI):** {entry.get('bench_reason','')}")
-            if treasons_txt:
+            treasons = entry.get("transfer_reasons") or []
+            if isinstance(treasons, list):
+                treasons_txt = "; ".join([str(x) for x in treasons if x is not None])
+            else:
+                treasons_txt = str(treasons)
+            if treasons_txt.strip():
                 st.caption(f"Transfer notes: {treasons_txt}")
 
-            # Extra analysis blocks (shown if decision saved them)
+            # --- Extra analysis (if backend stored them)
             cols_top = st.columns(2)
             with cols_top[0]:
                 if entry.get("strategy_summary"):
@@ -230,14 +344,12 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                     st.markdown(f"**Form rationale:** {entry['form_rationale']}")
                 if entry.get("budget_efficiency_score"):
                     st.caption(f"Budget efficiency: {entry['budget_efficiency_score']}/10")
-
             if entry.get("differentials"):
                 diffs = entry["differentials"]
                 if isinstance(diffs, list):
                     st.caption("Differentials: " + ", ".join(map(str, diffs)))
                 else:
                     st.caption(f"Differentials: {diffs}")
-
             if entry.get("key_risks"):
                 st.caption(f"Key risks: {entry['key_risks']}")
             if entry.get("next_gw_setup"):
@@ -245,28 +357,18 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             if entry.get("captain_logic"):
                 st.caption(f"Captain logic: {entry['captain_logic']}")
 
-            # --- XI/Bench/Squad (prefer snapshots from decision engine)
-            xi_codes = entry.get("xi_codes")
-            if not xi_codes and entry.get("xi_ids"):
-                xi_codes = [int(i2c.get(int(x), x)) for x in entry["xi_ids"]]
-            bench_codes = entry.get("bench_codes")
-            if not bench_codes:
-                legacy_bench = entry.get("bench_ids") or entry.get("bench_order") or []
-                bench_codes = [int(i2c.get(int(x), x)) for x in legacy_bench]
-            cap_code = entry.get("captain_code")
-            if cap_code is None and entry.get("captain_id") is not None:
-                cap_code = int(i2c.get(int(entry["captain_id"]), entry["captain_id"]))
-            vice_code = entry.get("vice_captain_code")  # may be absent
+            # --- XI/Bench/Squad (prefer embedded snapshots)
+            xi_codes = entry.get("xi_codes") or []
+            bench_codes = entry.get("bench_codes") or []
+            cap_code = int(entry.get("captain_code") or 0)
+            vice_code = int(entry.get("vice_captain_code") or 0)
 
-            # Prefer snapshot tables embedded by the engine; fallback to building from players_df
             week = _df_from_snapshot_list(entry.get("snapshot_15") or [])
             if week.empty:
                 week = _snapshot_df(players_df, entry.get("squad_codes") or [])
             if not week.empty:
-                xi_set = set(map(int, xi_codes or []))
-                bench_set = set(map(int, bench_codes or []))
-                cap_code = int(cap_code or 0)
-                vice_code = int(vice_code or 0)
+                xi_set = set(int(x) for x in xi_codes)
+                bench_set = set(int(x) for x in bench_codes)
 
                 week["XI"] = week["code"].apply(lambda c: "Yes" if int(c) in xi_set else "")
                 week["Bench"] = week["code"].apply(lambda c: "Yes" if int(c) in bench_set else "")
@@ -281,9 +383,13 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                 if "Vice" in week.columns:
                     display_cols.append("Vice")
 
+                sort_cols = ["Captain"]
+                if "Vice" in week.columns:
+                    sort_cols.append("Vice")
+                sort_cols += ["XI","pos","web_name"]
+
                 week = week[[c for c in display_cols if c in week.columns]] \
-                    .sort_values(["Captain", "Vice" if "Vice" in week.columns else "web_name", "XI", "pos", "web_name"],
-                                 ascending=[False, False, False, True, True])
+                    .sort_values(sort_cols, ascending=[False]*len(sort_cols[:-2]) + [True, True])
 
                 st.markdown("**Full 15-man squad (this GW):**")
                 st.dataframe(week, use_container_width=True)
