@@ -900,8 +900,8 @@ def run_ai_auto_until_current(
             break
 
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
-            # FPL caps free transfers at 2
-            state["free_transfers"] = min(2, state["free_transfers"] + 1)
+            # FPL caps free transfers at 5
+            state["free_transfers"] = min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
 
         # Save checkpoint for this GW
