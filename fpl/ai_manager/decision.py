@@ -490,95 +490,133 @@ def weekly_decision(
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
     usr = f"""
-Weekly FPL decision for GW {gw} - MAXIMIZE POINTS through strategic analysis.
+ELITE FPL DECISION ENGINE - GW {gw}
 
-CURRENT RESOURCES:
+SQUAD STATUS:
 - Free transfers: {state['free_transfers']}
-- Bank: £{state['bank']:.1f}m
-- Available chips: {chips} (TC/BB only)
+- Bank: £{state['bank']:.1f}m  
+- Total budget available: £{state['bank'] + sum([player['selling_price'] for player in current_squad]):.1f}m
+- Chips: {chips}
 
-CONSTRAINTS:
-- Max 3 players per club
-- Stay within budget (bank + sale values)
-- Like-for-like position swaps only
-- Valid XI: 1 GK + formation from {{3-4-3, 3-5-2, 4-4-2, 4-3-3, 5-3-2, 5-4-1}}
-
-CURRENT SQUAD (15 players by CODE):
+CURRENT 15-MAN SQUAD:
 {table}
 
-ANALYSIS FRAMEWORK - Consider ALL factors:
+OPTIMIZATION MANDATE: DEPLOY EVERY PENNY FOR MAXIMUM POINTS
 
-1. FIXTURE ANALYSIS:
-   - Difficulty ratings (1=easiest, 5=hardest) for next 3-5 GWs
-   - Home/away advantage
-   - Double gameweeks or blanks coming up
-   - Historical performance vs upcoming opponents
+CRITICAL BUDGET RULE: Bank >£2.0m is WASTEFUL unless saving for specific premium target next GW.
+- Current bank £{state['bank']:.1f}m must be justified or deployed immediately
+- Evaluate ALL upgrade paths before settling on budget options
 
-2. FORM & MOMENTUM:
-   - Points in last 3-5 GWs
-   - Expected vs actual points (xG, xA, xCS)
-   - Underlying stats trend
-   - Minutes played consistency
-   - Injury/rotation risk
+COMPREHENSIVE ANALYSIS REQUIRED:
 
-3. OWNERSHIP & VALUE:
-   - Template vs differential picks 
-   - Price changes (rising/falling)
-   - Most/least owned in top 10k 
-   - Value for money (points per £m)
+1. IMMEDIATE THREATS & OPPORTUNITIES:
+   ✓ Injured/suspended/rotation risks needing urgent removal
+   ✓ Players with terrible fixtures (FDR 4-5) vs great fixtures (FDR 1-2)
+   ✓ Price fallers vs risers (protect team value)
+   ✓ Form cliff-edges: players blanking 3+ GWs vs hot streaks
 
-4. BUDGET OPTIMIZATION - CRITICAL PRIORITIES:
-   - **IF BANK > £3.0m: MANDATORY to upgrade to premium players (£8m+)**
-   - **IF BANK > £2.0m: STRONGLY consider upgrades to proven performers**
-   - Dead money sitting in bank = wasted potential points
-   - Target premium players with good fixtures: Haaland, Salah, Palmer, etc.
-   - Best value by price brackets: <£5m, £5-7m, £7-9m, £9m+ tiers
-   - Only keep £0.5-1m bank for essential future moves
-   - Enablers (£4-5m) should only be used if freeing funds for premiums
+2. FIXTURE MATRIX (Next 5 GWs):
+   - Home/away splits
+   - Double gameweeks coming
+   - Historical head-to-head performance
+   - Clean sheet probabilities by fixture
+   - Goal/assist likelihood by matchup
 
-5. POSITIONAL PRIORITIES:
-   - GK: Clean sheet probability, save points, penalty save history
-   - DEF: Clean sheets + attacking returns, bonus magnet
-   - MID: Goals/assists potential, set pieces, penalty taker
-   - FWD: Goal threat, fixture run, supporting cast
+3. ADVANCED PERFORMANCE METRICS:
+   - xG/xA vs actual (regression candidates)
+   - Minutes played trends (rotation risk)
+   - Shots in box, big chances, key passes
+   - BPS magnets vs bonus-blind players
+   - Set piece responsibilities
 
-KNOWLEDGE BASE:
+4. OWNERSHIP & TEMPLATE WARFARE:
+   - Essential template picks (>40% top 10k owned)
+   - Dangerous differentials (<10% owned, explosive potential)
+   - Captaincy meta: popular vs contrarian picks
+   - Players primed for mass exodus/entry
+
+5. VALUE ENGINEERING:
+   - Best £4.5-5.5m defenders (attacking threat)
+   - Premium vs budget goalkeeper strategy
+   - Mid-price midfielder sweet spots (£6-8m)
+   - Forward value: budget enablers vs premium ceiling
+
+6. TACTICAL INTELLIGENCE:
+   - Manager system changes affecting player roles
+   - New signings impact on established players
+   - Formation shifts creating new opportunities
+   - Penalty takers, set piece specialists
+
+KNOWLEDGE BASE INTEGRATION:
 {kb_text}
 
-MANAGER INSTRUCTIONS:
-{note if note else "Focus on highest expected points for GW" + str(gw)}
+MANAGER DIRECTIVE:
+{note if note else f"MAXIMIZE GW{gw} points. Deploy full budget strategically."}
 
-DECISION REQUIREMENTS:
-- Justify each transfer with specific reasoning (form/fixtures/value/expected stats)
-- XI selection based on highest point probability for GW{gw}
-- Bench order: strongest bench player first (likely to play/score)
-- Captain: highest ceiling player with good fixture (consider differentials for rank moves)
-- Vice-captain strategy: safe backup or double-up protection
-- Consider chip usage if significant advantage (TC for double/easy fixture, BB for deep squad)
-- Flag any template fades or differential punts with reasoning
-- Bring in the best players when we have money.
+TRANSFER STRATEGY EVALUATION:
+For each potential transfer, calculate:
+- Point swing potential (new player vs current)
+- Opportunity cost (alternatives at similar price)
+- Future transfer flexibility impact
+- Risk vs ceiling assessment
 
-RISK ASSESSMENT:
-- Highlight rotation risks and injury concerns
-- Identify players due for regression (over/under-performing xG/xA)
-- Note any tactical or personnel changes affecting players
-- Consider downside scenarios for each major decision
+DECISION FRAMEWORK:
+1. Identify forced moves (injuries/suspensions)
+2. Find biggest point swing opportunities
+3. Deploy remaining budget optimally
+4. Consider chip usage for massive ceiling games
+5. Plan 1-2 GWs ahead for major moves
 
-Return JSON ONLY (exact schema):
+OUTPUT REQUIREMENTS:
+- XI optimized for GW{gw} ceiling, not template safety
+- Captain with highest projected points, not just "safe" pick
+- Bench ordered by: playing probability × point potential
+- Every transfer must increase expected squad points
+- Budget deployment justified (why not upgrade further?)
+
+ADVANCED OUTPUT SCHEMA:
 {{
   "chip": "NONE" | "TC" | "BB",
-  "transfers": [{{"out_code": <int>, "in_code": <int>}}],
+  "transfers": [{{"out_code": <int>, "in_code": <int>, "cost_change": <float>}}],
+  "final_bank": <float>,
   "xi_codes": [11 ints],
-  "bench_codes": [4 ints],
+  "bench_codes": [4 ints],  
   "captain_code": <int>,
   "vice_captain_code": <int>,
-  "reason": "<comprehensive rationale covering key factors and risk assessment>",
-  "transfer_reasons": ["<specific reason for each transfer including form/fixtures/value/expected stats>"],
-  "bench_reason": "<justification for bench order based on likelihood to play/score>",
-  "risks": "<key risks and mitigation strategies>",
-  "differentials": ["<any differential picks and reasoning>"]
-}}
-"""
+  "formation": "X-X-X",
+  
+  "strategy_summary": "<primary approach for GW{gw}>",
+  "transfer_analysis": [
+    {{
+      "transfer": "Player Out → Player In",
+      "cost": "±£X.Xm", 
+      "reasoning": "<form/fixtures/value justification>",
+      "alternatives_considered": ["Player A", "Player B"],
+      "point_swing_projection": "+X.X pts"
+    }}
+  ],
+  
+  "budget_deployment": {{
+    "remaining_bank": <float>,
+    "justification": "<why this bank amount is optimal>",
+    "next_gw_plan": "<future transfer considerations>"
+  }},
+  
+  "xi_rationale": "<formation choice and player selection logic>",
+  "captaincy_analysis": {{
+    "captain_reasoning": "<why this captain over alternatives>", 
+    "differential_case": "<template vs differential argument>",
+    "ceiling_vs_floor": "<risk assessment>"
+  }},
+  
+  "risk_assessment": [
+    "<rotation risk>",
+    "<injury concerns>", 
+    "<fixture difficulty>",
+    "<form regression candidates>"
+  ],
+  
+  "competitive_edge": "<how
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     obj = _json_from_text(raw)
     if not obj:
