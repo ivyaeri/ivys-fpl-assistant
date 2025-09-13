@@ -342,8 +342,6 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
         chip = (entry.get("chip") or "NONE").upper()
         if chip != "NONE":
             header_bits.append(f"Chip {chip}")
-        if entry.get("schema_version"):
-            header_bits.append(f"Schema {entry['schema_version']}")
         if entry.get("redraft"):
             header_bits.append("Full redraft")
 
