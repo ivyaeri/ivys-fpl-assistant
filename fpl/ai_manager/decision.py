@@ -489,7 +489,7 @@ def weekly_decision(
         "You are an autonomous FPL manager. "
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
-usr = f"""
+    usr = f"""
 FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
 
 You are an elite FPL manager with deep statistical knowledge. Your goal: MAXIMIZE POINTS while building long-term value.
