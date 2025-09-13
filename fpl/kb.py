@@ -3,10 +3,30 @@ from datetime import datetime
 import pandas as pd
 import pytz
 
-from fpl.api import fetch_bootstrap, fetch_fixtures, fetch_player_history
+from fpl.api import fetch_bootstrap, fetch_fixtures, fetch_player_history, fetch_event_live
 
 TZ = pytz.timezone("Europe/London")
 POS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
+
+def _fetch_gw_points(gw: int, id_to_code: dict) -> dict[int, int]:
+    """Return {player_code: points} for a given GW."""
+    try:
+        live = fetch_event_live(gw)  # wraps /event/{gw}/live/
+        elements = live.get("elements", [])
+        pts_map = {}
+        for e in elements:
+            el_id = int(e["id"])
+            code = id_to_code.get(el_id)  # stable player code
+            if not code:
+                continue
+            stats = e.get("stats", {})
+            total = int(stats.get("total_points", 0))
+            pts_map[int(code)] = total
+        return pts_map
+    except Exception:
+        return {}
 
 def _recent_block(element_id: int, last_n: int = 5):
     """element_id is the season-specific FPL 'id' (NOT code)."""
@@ -118,15 +138,22 @@ def build_full_kb(include_history: bool = True, last_n: int = 5):
 
     header = f"KB_BUILT: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M')} | CURRENT_GW: {gw_now} | PLAYERS: {len(p_lines)}"
     full_kb = f"{header}\n\n[FIXTURES]\n" + "\n".join(team_fx_lines) + "\n\n[PLAYERS]\n" + "\n".join(p_lines)
+        # ---- Historical GW points (last 5) ----
+    points_by_gw = {}
+    max_gw = int(events["id"].max()) if not events.empty else 0
+    for gw in range(max(1, (gw_now or 1) - 5), (gw_now or 1)):
+        pts_map = _fetch_gw_points(gw, id_to_code)
+        if pts_map:
+            points_by_gw[gw] = pts_map
 
     meta = {
         "gw": gw_now,
         "players": len(p_lines),
         "header": header,
-        # Useful maps for your agent:
-        "code_to_id": code_to_id,   # stable → current-season id
-        "id_to_code": id_to_code,   # current-season id → stable
-        "name_to_code": name_to_code,  # web_name (lower) → stable
+        "code_to_id": code_to_id,
+        "id_to_code": id_to_code,
+        "name_to_code": name_to_code,
+        "points_by_gw": points_by_gw,   # 👈 now available for refresh
     }
 
     return full_kb, meta, players, team_fx_lines
