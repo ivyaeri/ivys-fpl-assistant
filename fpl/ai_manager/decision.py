@@ -522,7 +522,7 @@ ANALYSIS FRAMEWORK - Consider ALL factors:
    - Injury/rotation risk
 
 3. OWNERSHIP & VALUE:
-   - Template vs differential picks
+   - Template vs differential picks 
    - Price changes (rising/falling)
    - Most/least owned in top 10k 
    - Value for money (points per £m)
@@ -556,6 +556,7 @@ DECISION REQUIREMENTS:
 - Vice-captain strategy: safe backup or double-up protection
 - Consider chip usage if significant advantage (TC for double/easy fixture, BB for deep squad)
 - Flag any template fades or differential punts with reasoning
+- Bring in the best players when we have money.
 
 RISK ASSESSMENT:
 - Highlight rotation risks and injury concerns
