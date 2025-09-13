@@ -532,6 +532,7 @@ ANALYSIS FRAMEWORK - Consider ALL factors:
    - Enablers vs premium balance
    - Transfer value vs keeping bank for future
 
+
 5. POSITIONAL PRIORITIES:
    - GK: Clean sheet probability, save points, penalty save history
    - DEF: Clean sheets + attacking returns, bonus magnet
@@ -554,7 +555,7 @@ DECISION REQUIREMENTS:
 - Flag any template fades or differential punts with reasoning
 - Check how much money we have in the bank and always bring the best substitutes based on their ownership. 
 - Transfers any players who do not start
-- Use the money we dont always have to save it.
+- Only follow budget optimization if we have less that 1M in the bank.
 
 RISK ASSESSMENT:
 - Highlight rotation risks and injury concerns
