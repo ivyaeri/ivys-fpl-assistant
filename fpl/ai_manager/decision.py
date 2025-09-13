@@ -1156,7 +1156,6 @@ def refresh_logged_points(
         return 0
     state = st.session_state.auto_mgr
 
-    gw_points = kb_meta["points_by_gw"].get(gw, {})
    
     updated = 0
     for entry in state.get("log", []):
