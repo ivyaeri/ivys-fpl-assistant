@@ -1142,7 +1142,6 @@ def _best_code_to_id(
     if players_df is not None and "code" in players_df.columns and "id" in players_df.columns:
         return {int(c): int(i) for c, i in zip(players_df["code"], players_df["id"])}
     return {}
-
 def refresh_logged_points(
     user_id: str,
     players_df: pd.DataFrame | None = None,
@@ -1221,9 +1220,10 @@ def force_redraft_gw1(
     user_id: str,
     players_df: pd.DataFrame,
     kb_text: str,
-) -> Tuple[bool, str]:
     model_name: str,
     extra_instructions: str | None = None,
+) -> Tuple[bool, str]:
+    
     """Re-draft a full legal 15 for GW1 using the LLM and replace state.squad (codes; no FT cost)."""
     if "auto_mgr" not in st.session_state:
         return False, "No state."
