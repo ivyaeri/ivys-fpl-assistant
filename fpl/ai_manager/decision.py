@@ -1156,8 +1156,9 @@ def refresh_logged_points(
         return 0
     state = st.session_state.auto_mgr
 
-    # Historical GW datasets
-    gw_history: dict[int, pd.DataFrame] = st.session_state.get("gw_history", {})
+   gw_points = kb_meta["points_by_gw"].get(gw, {})
+new_pts = sum(gw_points.get(code, 0) for code in xi_codes) * (2 if code == cap_code else 1) ...
+
 
     updated = 0
     for entry in state.get("log", []):
