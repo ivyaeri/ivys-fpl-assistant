@@ -612,13 +612,13 @@ Return JSON with DETAILED reasoning:
   "template_stance": "<are you following template or contrarian this GW and why>",
   
   "transfer_breakdown": [
-    {
+    {{
       "out": "<player name>",
       "in": "<player name>", 
       "cost_impact": "<price change in budget>",
       "reason": "<fixture/form/value justification>",
       "risk_level": "LOW|MEDIUM|HIGH"
-    }
+    }}
   ],
   
   "xi_justification": "<why these 11 over alternatives>",
