@@ -1155,8 +1155,27 @@ def refresh_logged_points(
         return 0
     state = st.session_state.auto_mgr
 
+    # 1) Make sure we fetch fresh history (avoid stale LRU cache)
+    try:
+        _history_for_player.cache_clear()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # 2) Build the most reliable code->id map available
     code_to_id = _best_code_to_id(players_df, kb_meta or st.session_state.get("kb_meta"))
-    id_to_code = {v: k for k, v in code_to_id.items()} if code_to_id else {}
+    if not code_to_id and players_df is not None:
+        # Last-ditch: try to build from players_df if possible
+        if "code" in players_df.columns and "id" in players_df.columns:
+            try:
+                code_to_id = {int(c): int(i) for c, i in zip(players_df["code"], players_df["id"])}
+            except Exception:
+                code_to_id = {}
+    if not code_to_id:
+        # Without this map, we cannot compute points; bail early
+        st.warning("refresh_logged_points: missing code_to_id mapping; no points updated.")
+        return 0
+
+    id_to_code = {v: k for k, v in code_to_id.items()}
     def ids_to_codes(lst):
         out = []
         for x in lst or []:
@@ -1170,17 +1189,25 @@ def refresh_logged_points(
     updated = 0
     for entry in state.get("log", []):
         gw = int(entry.get("gw", 0))
+        if gw <= 0:
+            continue
+
+        # Prefer codes; fall back to legacy ids if needed
         xi_codes    = list(map(int, entry.get("xi_codes") or ids_to_codes(entry.get("xi_ids"))))
         bench_codes = list(map(int, entry.get("bench_codes") or ids_to_codes(entry.get("bench_ids") or entry.get("bench_order"))))
-        cap_code    = entry.get("captain_code")
+
+        cap_code = entry.get("captain_code")
         if cap_code is None and entry.get("captain_id") is not None:
             cap_code = id_to_code.get(int(entry["captain_id"]), 0)
         cap_code = int(cap_code or 0)
 
         chip = (entry.get("chip") or "NONE").upper()
         points_hit = int(entry.get("points_hit", 0))
+
+        # 3) Compute new points from official player histories for THAT GW
         new_pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id) - points_hit
 
+        # 4) If different, update the entry and persist
         if int(entry.get("points", -999999)) != int(new_pts):
             entry["points"] = int(new_pts)
             entry["xi_codes"] = xi_codes
@@ -1188,8 +1215,10 @@ def refresh_logged_points(
             entry["captain_code"] = cap_code
             append_gw_log(user_id, gw, entry)
             updated += 1
+
     save_state(user_id, state)
     return updated
+
 
 def force_redraft_gw1(
     user_id: str,
