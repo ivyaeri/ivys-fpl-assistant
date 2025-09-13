@@ -381,7 +381,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                     st.markdown(
                         f"**Transfer:** {_pname_by_code(players_df, mv.get('out_code'))} → {_pname_by_code(players_df, mv.get('in_code'))}"
                     )
-
+            
             # ----- Transfer breakdown table (if present)
             tbreak = entry.get("transfer_breakdown") or []
             if isinstance(tbreak, list) and tbreak:
@@ -391,6 +391,10 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                 df_tb = df_tb[use_cols] if use_cols else df_tb
                 st.markdown("**Transfer breakdown (AI):**")
                 st.dataframe(df_tb, use_container_width=True)
+            bench_codes = entry.get("bench_codes") or []
+            if bench_codes:
+                bench_names = [_pname_by_code(players_df, c) for c in bench_codes]
+                st.markdown("Bench order: " + " → ".join(map(str, bench_names)))
 
             # ----- Reasons & analysis
             st.markdown(f"**Reason (AI):** {entry.get('reason','')}")
@@ -434,14 +438,8 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
 
             # ----- XI/Bench/Squad (prefer embedded snapshots)
             xi_codes    = entry.get("xi_codes") or []
-            bench_codes = entry.get("bench_codes") or []
             cap_code    = int(entry.get("captain_code") or 0)
             vice_code   = int(entry.get("vice_captain_code") or 0)
-
-            # NEW: Bench order (names) line
-            if bench_codes:
-                bench_names = [_pname_by_code(players_df, c) for c in bench_codes]
-                st.caption("Bench order: " + " → ".join(map(str, bench_names)))
 
             week = _df_from_snapshot_list(entry.get("snapshot_15") or [])
             if week.empty:
@@ -477,9 +475,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
 
                 st.markdown("**Full 15-man squad (this GW):**")
                 st.dataframe(week, use_container_width=True)
-                st.markdown(f"**Captain:** {_pname_by_code(players_df, cap_code) if cap_code else '—'}")
-                if vice_code:
-                    st.caption(f"Vice: {_pname_by_code(players_df, vice_code)}")
+               
             else:
                 st.info("Squad snapshot not available for this entry.")
 
