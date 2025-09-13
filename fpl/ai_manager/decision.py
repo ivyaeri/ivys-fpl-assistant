@@ -489,7 +489,7 @@ def weekly_decision(
         "You are an autonomous FPL manager. "
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
-    usr = usr = f"""
+    usr = f"""
 Weekly FPL decision for GW {gw} - MAXIMIZE POINTS through strategic analysis.
 
 CURRENT RESOURCES:
@@ -524,14 +524,17 @@ ANALYSIS FRAMEWORK - Consider ALL factors:
 3. OWNERSHIP & VALUE:
    - Template vs differential picks
    - Price changes (rising/falling)
-   - Most/least owned in top 10k
+   - Most/least owned in top 10k 
    - Value for money (points per £m)
 
-4. BUDGET OPTIMIZATION:
-   - Best performers under £5m, £6m, £7m by position
-   - Enablers vs premium balance
-   - Transfer value vs keeping bank for future
-
+4. BUDGET OPTIMIZATION - CRITICAL PRIORITIES:
+   - **IF BANK > £3.0m: MANDATORY to upgrade to premium players (£8m+)**
+   - **IF BANK > £2.0m: STRONGLY consider upgrades to proven performers**
+   - Dead money sitting in bank = wasted potential points
+   - Target premium players with good fixtures: Haaland, Salah, Palmer, etc.
+   - Best value by price brackets: <£5m, £5-7m, £7-9m, £9m+ tiers
+   - Only keep £0.5-1m bank for essential future moves
+   - Enablers (£4-5m) should only be used if freeing funds for premiums
 
 5. POSITIONAL PRIORITIES:
    - GK: Clean sheet probability, save points, penalty save history
@@ -553,9 +556,6 @@ DECISION REQUIREMENTS:
 - Vice-captain strategy: safe backup or double-up protection
 - Consider chip usage if significant advantage (TC for double/easy fixture, BB for deep squad)
 - Flag any template fades or differential punts with reasoning
-- Check how much money we have in the bank and always bring the best substitutes based on their ownership. 
-- Transfers any players who do not start
-- Only follow budget optimization if we have less that 1M in the bank.
 
 RISK ASSESSMENT:
 - Highlight rotation risks and injury concerns
