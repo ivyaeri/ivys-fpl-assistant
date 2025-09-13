@@ -1157,9 +1157,7 @@ def refresh_logged_points(
     state = st.session_state.auto_mgr
 
     gw_points = kb_meta["points_by_gw"].get(gw, {})
-    new_pts = sum(gw_points.get(code, 0) for code in xi_codes) * (2 if code == cap_code else 1) ...
-
-
+   
     updated = 0
     for entry in state.get("log", []):
         gw = int(entry.get("gw", 0))
