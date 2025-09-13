@@ -17,6 +17,17 @@ import typing as _t
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+def _gw_points_map(gw: int, id_to_code: dict) -> dict[int, int]:
+    """Return {code: total_points} mapping for a specific GW."""
+    live = fetch_event_live(gw)
+    elements = live.get("elements", [])
+    points = {}
+    for el in elements:
+        fpl_id = int(el["id"])
+        code = id_to_code.get(fpl_id, fpl_id)
+        points[code] = int(el["stats"].get("total_points", 0))
+    return points
+
 
 def _gw_deadline_utc(kb_meta: dict, gw: int) -> _t.Optional[datetime]:
     """
@@ -1150,15 +1161,16 @@ def refresh_logged_points(
     kb_meta: dict | None = None,
 ) -> int:
     """
-    Recompute points for all logged GWs using historical per-GW data.
-    Uses st.session_state["gw_history"] if available, otherwise fetches
-    fresh data from FPL API. Once a GW is locked, don't overwrite it again.
+    Recompute points for all logged GWs using official FPL per-GW data.
+    Once a GW is locked, don't overwrite it again.
     """
     if "auto_mgr" not in st.session_state:
         return 0
     state = st.session_state.auto_mgr
 
-    gw_history = st.session_state.get("gw_history", {})  # <- FIX
+    # current season code<->id mapping
+    code_to_id = (kb_meta or st.session_state.get("kb_meta", {})).get("code_to_id", {})
+    id_to_code = {v: k for k, v in code_to_id.items()} if code_to_id else {}
 
     updated = 0
     for entry in state.get("log", []):
@@ -1166,41 +1178,36 @@ def refresh_logged_points(
         if not gw:
             continue
 
-        # Skip if locked already
         if entry.get("points_locked", False):
             continue
 
-        # Fetch GW dataset
-        if gw in gw_history:
-            gw_players = gw_history[gw]
-        else:
-            gw_live = fetch_event_live(gw)
-            gw_players = {
-                int(el["id"]): int(el["stats"]["total_points"])
-                for el in gw_live.get("elements", [])
-            }
-            gw_history[gw] = gw_players
-            st.session_state["gw_history"] = gw_history  # persist
+        # fetch points for this GW
+        gw_points = _gw_points_map(gw, id_to_code)
 
-        # Build code→points mapping for this GW
-        code_to_id = (kb_meta or st.session_state.get("kb_meta", {})).get("code_to_id", {})
-        id_to_code = {v: k for k, v in code_to_id.items()}
-        gw_points = { id_to_code.get(pid, pid): pts for pid, pts in gw_players.items() }
-
-        # Resolve squad
         xi_codes = list(map(int, entry.get("xi_codes") or []))
         bench_codes = list(map(int, entry.get("bench_codes") or []))
         cap_code = int(entry.get("captain_code") or 0)
+        vice_code = int(entry.get("vice_captain_code") or 0)
+        chip = (entry.get("chip") or "NONE").upper()
         points_hit = int(entry.get("points_hit", 0))
 
-        # Compute points
-        new_pts = sum(
-            gw_points.get(code, 0) * (2 if code == cap_code else 1)
-            for code in xi_codes
-        )
+        # base XI points with captain logic
+        new_pts = 0
+        for code in xi_codes:
+            pts = gw_points.get(code, 0)
+            if code == cap_code:
+                if chip == "TC":
+                    pts *= 3
+                else:
+                    pts *= 2
+            new_pts += pts
+
+        # bench boost
+        if chip == "BB":
+            new_pts += sum(gw_points.get(c, 0) for c in bench_codes)
+
         new_pts -= points_hit
 
-        # Update and lock
         if int(entry.get("points", -999999)) != int(new_pts):
             entry["points"] = int(new_pts)
             entry["points_locked"] = True
@@ -1209,7 +1216,6 @@ def refresh_logged_points(
 
     save_state(user_id, state)
     return updated
-
 
 
 def force_redraft_gw1(
