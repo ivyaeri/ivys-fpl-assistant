@@ -575,7 +575,7 @@ def weekly_decision(
         "You are an autonomous FPL manager. "
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
-    usr = usr = f"""
+    usr = f"""
 FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
 
 You are an elite FPL manager with deep statistical knowledge. Your goal: MAXIMIZE POINTS while building long-term value.
@@ -586,14 +586,14 @@ Bank: £{state['bank']:.1f}m | Free Transfers: {state['free_transfers']} | Chips
 
 ══════════ CRITICAL SUCCESS FACTORS ══════════
 
-🎯 **POINTS MAXIMIZATION HIERARCHY:**
+**POINTS MAXIMIZATION HIERARCHY:**
 1. **Starting XI Strength** - Your 11 must be point machines
 2. **Budget Optimization** - NEVER waste money in bank (max 1.0m buffer)
 3. **Fixture Leverage** - Target easiest opponents & attacking situations
 4. **Form Over Fame** - In-form £6m > Out-of-form £10m
 5. **Template Balance** - Mix of safe picks + differentials for rank moves
 
-📊 **MANDATORY ANALYSIS CHECKLIST:**
+**MANDATORY ANALYSIS CHECKLIST:**
 
 **FIXTURE INTELLIGENCE (Next 3-5 GWs):**
 - FDR ratings: 1-2 (green) = prioritize, 4-5 (red) = avoid
@@ -679,8 +679,21 @@ MANAGER DIRECTIVE:
 {note if note else f"Maximize GW{gw} points while optimizing budget usage"}
 
 ══════════ ELITE OUTPUT REQUIRED ══════════
+STRICT OUTPUT CONTRACT — READ CAREFULLY
 
-Return JSON with DETAILED reasoning (single JSON object, no markdown/code fences, numbers must be numeric, use player **CODES**):
+- Output MUST be a single valid JSON object.
+- No markdown, code fences, comments, or extra prose before/after the JSON.
+- Use player CODES only (from the Squad table above).
+- All keys below are REQUIRED; types must be exact (numbers as numbers, not strings).
+- xi_codes + bench_codes must be disjoint and together cover all 15 current squad codes.
+- Exactly 1 GK in xi_codes; formation must be valid (e.g., 3-4-3, 3-5-2, 4-4-2, 4-5-1, 5-4-1).
+- captain_code and vice_captain_code must be different and both inside xi_codes.
+- Every transfer must be like-for-like by position, ≤3 per club after application, and within budget.
+- final_bank must equal starting bank ± price deltas from transfers (≥ 0.0), and keep ≤ £1.0m unless strongly justified.
+- transfer_reasons must be a list of strings in the same order as transfers.
+- If making no transfers, return "transfers": [] and set final_bank to the current bank.
+
+Return EXACTLY this JSON shape (all keys required):
 
 {{
   "schema_version": "v2",
@@ -688,14 +701,14 @@ Return JSON with DETAILED reasoning (single JSON object, no markdown/code fences
   "chip": "NONE" | "TC" | "BB",
   "transfers": [{{"out_code": <int>, "in_code": <int>}}],
 
-  "xi_codes": [11 ints],
-  "bench_codes": [4 ints], 
+  "xi_codes": [<11 ints>],
+  "bench_codes": [<4 ints>],
   "captain_code": <int>,
   "vice_captain_code": <int>,
 
-  "reason": "<2-3 sentence high-level approach>",                         // legacy/UI key
-  "bench_reason": "<bench ordering logic>",                                // legacy/UI key
-  "transfer_reasons": ["<one-line rationale per transfer>"],               // legacy/UI key
+  "reason": "<2-3 sentence high-level approach>",
+  "bench_reason": "<bench ordering logic>",
+  "transfer_reasons": ["<one-line rationale per transfer>"],
 
   "strategy_summary": "<same as reason or expanded>",
   "budget_optimization": "<how you maximized the £{state['bank']:.1f}m + any sale proceeds>",
@@ -707,7 +720,7 @@ Return JSON with DETAILED reasoning (single JSON object, no markdown/code fences
   "transfer_breakdown": [
     {{
       "out": "<player name>",
-      "in": "<player name>", 
+      "in": "<player name>",
       "out_code": <int>,
       "in_code": <int>,
       "cost_impact": "<+/-£X.Ym>",
@@ -718,23 +731,35 @@ Return JSON with DETAILED reasoning (single JSON object, no markdown/code fences
 
   "xi_justification": "<why these 11 over alternatives>",
   "captain_logic": "<ceiling vs safety vs differential reasoning>",
-  "bench_strategy": "<order logic: who's most likely to play/score>",
+  "bench_strategy": "<same as bench_reason or elaboration>",
   "key_risks": "<biggest threats to this strategy>",
   "next_gw_setup": "<how this prepares you for GW{gw+1}>",
 
   "final_bank": <float>,
-  "budget_efficiency_score": <int>   // 1–10
+  "budget_efficiency_score": <int>
 }}
 
-🚨 **EXCELLENCE STANDARDS:**
+══════════ VALIDATION CHECKLIST (apply before you print JSON) ══════════
+- JSON only; no extra text.
+- All required keys present and non-null.
+- xi_codes has 11, bench_codes has 4; union = 15; intersection = ∅.
+- Exactly 1 GK in xi_codes; valid DEF-MID-FWD counts (e.g., 3-4-3 / 3-5-2 / 4-4-2 / 4-5-1 / 5-4-1).
+- captain_code and vice_captain_code ∈ xi_codes and are different.
+- Each transfer is like-for-like by position; resulting squad obeys ≤3 per club and budget.
+- transfer_reasons aligns one-to-one (same order) with transfers.
+- final_bank computed from listed transfers using prices in the Squad table; ≥ 0.0.
+- budget_efficiency_score is an integer 1–10 (≥ 8 if you keep >£1.0m, justify in budget_optimization).
+
+EXCELLENCE STANDARDS:
 - Every transfer must improve expected points
 - Budget efficiency score must be 8+/10
 - Justify ANY bank over £1.0m 
 - Consider 2-3 alternative strategies before deciding
 - Account for upcoming price changes
 - Balance risk vs reward for rank movement
-- Output must be valid JSON only (no extra text), and all codes must exist in the Squad list.
 """
+
+
 
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     obj = _json_from_text(raw)
