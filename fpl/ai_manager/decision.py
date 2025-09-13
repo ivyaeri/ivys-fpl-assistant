@@ -575,7 +575,7 @@ def weekly_decision(
         "You are an autonomous FPL manager. "
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
-    usr = f"""
+    usr = usr = f"""
 FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
 
 You are an elite FPL manager with deep statistical knowledge. Your goal: MAXIMIZE POINTS while building long-term value.
@@ -586,14 +586,14 @@ Bank: £{state['bank']:.1f}m | Free Transfers: {state['free_transfers']} | Chips
 
 ══════════ CRITICAL SUCCESS FACTORS ══════════
 
-**POINTS MAXIMIZATION HIERARCHY:**
+🎯 **POINTS MAXIMIZATION HIERARCHY:**
 1. **Starting XI Strength** - Your 11 must be point machines
 2. **Budget Optimization** - NEVER waste money in bank (max 1.0m buffer)
 3. **Fixture Leverage** - Target easiest opponents & attacking situations
 4. **Form Over Fame** - In-form £6m > Out-of-form £10m
 5. **Template Balance** - Mix of safe picks + differentials for rank moves
 
-**MANDATORY ANALYSIS CHECKLIST:**
+📊 **MANDATORY ANALYSIS CHECKLIST:**
 
 **FIXTURE INTELLIGENCE (Next 3-5 GWs):**
 - FDR ratings: 1-2 (green) = prioritize, 4-5 (red) = avoid
@@ -678,6 +678,54 @@ KNOWLEDGE BASE:
 MANAGER DIRECTIVE:
 {note if note else f"Maximize GW{gw} points while optimizing budget usage"}
 
+══════════ ELITE OUTPUT REQUIRED ══════════
+
+Return JSON with DETAILED reasoning (single JSON object, no markdown/code fences, numbers must be numeric, use player **CODES**):
+
+{{
+  "schema_version": "v2",
+
+  "chip": "NONE" | "TC" | "BB",
+  "transfers": [{{"out_code": <int>, "in_code": <int>}}],
+
+  "xi_codes": [11 ints],
+  "bench_codes": [4 ints], 
+  "captain_code": <int>,
+  "vice_captain_code": <int>,
+
+  "reason": "<2-3 sentence high-level approach>",                         // legacy/UI key
+  "bench_reason": "<bench ordering logic>",                                // legacy/UI key
+  "transfer_reasons": ["<one-line rationale per transfer>"],               // legacy/UI key
+
+  "strategy_summary": "<same as reason or expanded>",
+  "budget_optimization": "<how you maximized the £{state['bank']:.1f}m + any sale proceeds>",
+  "fixture_leverage": "<key fixtures/players you're targeting this GW>",
+  "form_rationale": "<which in-form players you prioritized and why>",
+  "differentials": ["<any differential picks 5-20% owned with reasoning>"],
+  "template_stance": "<are you following template or contrarian this GW and why>",
+
+  "transfer_breakdown": [
+    {{
+      "out": "<player name>",
+      "in": "<player name>", 
+      "out_code": <int>,
+      "in_code": <int>,
+      "cost_impact": "<+/-£X.Ym>",
+      "reason": "<fixture/form/value justification>",
+      "risk_level": "LOW" | "MEDIUM" | "HIGH"
+    }}
+  ],
+
+  "xi_justification": "<why these 11 over alternatives>",
+  "captain_logic": "<ceiling vs safety vs differential reasoning>",
+  "bench_strategy": "<order logic: who's most likely to play/score>",
+  "key_risks": "<biggest threats to this strategy>",
+  "next_gw_setup": "<how this prepares you for GW{gw+1}>",
+
+  "final_bank": <float>,
+  "budget_efficiency_score": <int>   // 1–10
+}}
+
 🚨 **EXCELLENCE STANDARDS:**
 - Every transfer must improve expected points
 - Budget efficiency score must be 8+/10
@@ -685,46 +733,9 @@ MANAGER DIRECTIVE:
 - Consider 2-3 alternative strategies before deciding
 - Account for upcoming price changes
 - Balance risk vs reward for rank movement
-
-══════════ ELITE OUTPUT REQUIRED ══════════
-
-Return JSON:
-
-{{
-  "chip": "NONE" | "TC" | "BB",
-  "transfers": [{{"out_code": <int>, "in_code": <int>}}],
-  "xi_codes": [11 ints],
-  "bench_codes": [4 ints], 
-  "captain_code": <int>,
-  "vice_captain_code": <int>,
-
-  "strategy_summary": "<2-3 sentence high-level approach>",
-  "budget_optimization": "<how you used the bank + sale proceeds>",
-  "fixture_leverage": "<key fixtures/players targeted>",
-  "form_rationale": "<in-form priorities>",
-  "differentials": ["<5-20% owned picks>"],
-  "template_stance": "<template vs contrarian stance>",
-
-  "transfer_breakdown": [
-    {{
-      "out": "<player name>",
-      "in": "<player name>", 
-      "cost_impact": "<budget delta>",
-      "reason": "<fixture/form/value justification>",
-      "risk_level": "LOW|MEDIUM|HIGH"
-    }}
-  ],
-
-  "xi_justification": "<why these 11>",
-  "captain_logic": "<ceiling vs safety vs differential>",
-  "bench_strategy": "<bench order logic>",
-  "key_risks": "<threats to plan>",
-  "next_gw_setup": "<prep for GW{gw+1}>",
-
-  "final_bank": "<expected bank after transfers>",
-  "budget_efficiency_score": "<1-10>"
-}}
+- Output must be valid JSON only (no extra text), and all codes must exist in the Squad list.
 """
+
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     obj = _json_from_text(raw)
     if not obj:
