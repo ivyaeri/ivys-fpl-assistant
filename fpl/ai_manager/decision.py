@@ -490,7 +490,7 @@ def weekly_decision(
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
     usr = f"""
-FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
+🏆 FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
 
 You are an elite FPL manager with deep statistical knowledge. Your goal: MAXIMIZE POINTS while building long-term value.
 
@@ -507,7 +507,7 @@ Bank: £{state['bank']:.1f}m | Free Transfers: {state['free_transfers']} | Chips
 4. **Form Over Fame** - In-form £6m > Out-of-form £10m
 5. **Template Balance** - Mix of safe picks + differentials for rank moves
 
-**MANDATORY ANALYSIS CHECKLIST:**
+📊 **MANDATORY ANALYSIS CHECKLIST:**
 
 **FIXTURE INTELLIGENCE (Next 3-5 GWs):**
 - FDR ratings: 1-2 (green) = prioritize, 4-5 (red) = avoid
@@ -539,13 +539,13 @@ Bank: £{state['bank']:.1f}m | Free Transfers: {state['free_transfers']} | Chips
 - MID: Goals/assists + set pieces + advanced positions
 - FWD: Shot volume + big chances + supporting cast quality
 
-**BUDGET MAXIMIZATION RULES:**
+💰 **BUDGET MAXIMIZATION RULES:**
 - Bank should be £0.0-1.0m (emergency buffer only)
 - Every unused million = ~2-3 points lost per GW
 - Upgrade path: Identify weakest starter, find best replacement in budget
 - Value traps: Expensive benchwarmer vs playing budget option
 
-**STRATEGIC THINKING:**
+🧠 **STRATEGIC THINKING:**
 
 **Template Disruption:**
 - When template fails: Be contrarian on popular picks with bad fixtures
@@ -612,13 +612,13 @@ Return JSON with DETAILED reasoning:
   "template_stance": "<are you following template or contrarian this GW and why>",
   
   "transfer_breakdown": [
-    {{
+    {
       "out": "<player name>",
       "in": "<player name>", 
       "cost_impact": "<price change in budget>",
       "reason": "<fixture/form/value justification>",
       "risk_level": "LOW|MEDIUM|HIGH"
-    }}
+    }
   ],
   
   "xi_justification": "<why these 11 over alternatives>",
@@ -631,7 +631,7 @@ Return JSON with DETAILED reasoning:
   "budget_efficiency_score": "<rate 1-10 how well budget is utilized>"
 }}
 
-**EXCELLENCE STANDARDS:**
+🚨 **EXCELLENCE STANDARDS:**
 - Every transfer must improve expected points
 - Budget efficiency score must be 8+/10
 - Justify ANY bank over £1.0m 
