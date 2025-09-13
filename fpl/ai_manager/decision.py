@@ -552,7 +552,9 @@ DECISION REQUIREMENTS:
 - Vice-captain strategy: safe backup or double-up protection
 - Consider chip usage if significant advantage (TC for double/easy fixture, BB for deep squad)
 - Flag any template fades or differential punts with reasoning
-- Check how much money we have in the bank and always try to bring best substitutes and do not fear using money. 
+- Check how much money we have in the bank and always bring the best substitutes based on their ownership. 
+- Transfers any players who do not start
+- Use the money we dont always have to save it.
 
 RISK ASSESSMENT:
 - Highlight rotation risks and injury concerns
