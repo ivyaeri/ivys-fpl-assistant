@@ -503,7 +503,7 @@ CURRENT 15-MAN SQUAD:
 
 OPTIMIZATION MANDATE: DEPLOY EVERY PENNY FOR MAXIMUM POINTS
 
-CRITICAL BUDGET RULE: Bank >£2.0m is WASTEFUL unless saving for specific premium target next GW.
+CRITICAL BUDGET RULE: Bank >£1.5m is WASTEFUL unless saving for specific premium target next GW. 
 - Current bank £{state['bank']:.1f}m must be justified or deployed immediately
 - Evaluate ALL upgrade paths before settling on budget options
 
