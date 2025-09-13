@@ -1142,21 +1142,24 @@ def _best_code_to_id(
     if players_df is not None and "code" in players_df.columns and "id" in players_df.columns:
         return {int(c): int(i) for c, i in zip(players_df["code"], players_df["id"])}
     return {}
+from fpl.api import fetch_event_live
+
 def refresh_logged_points(
     user_id: str,
     players_df: pd.DataFrame | None = None,
     kb_meta: dict | None = None,
 ) -> int:
     """
-    Recompute points for all logged GWs using historical per-GW data
-    (stored in st.session_state["gw_history"]). 
-    Once a GW is locked, don't overwrite it again.
+    Recompute points for all logged GWs using historical per-GW data.
+    Uses st.session_state["gw_history"] if available, otherwise fetches
+    fresh data from FPL API. Once a GW is locked, don't overwrite it again.
     """
     if "auto_mgr" not in st.session_state:
         return 0
     state = st.session_state.auto_mgr
 
-   
+    gw_history = st.session_state.get("gw_history", {})  # <- FIX
+
     updated = 0
     for entry in state.get("log", []):
         gw = int(entry.get("gw", 0))
@@ -1167,44 +1170,39 @@ def refresh_logged_points(
         if entry.get("points_locked", False):
             continue
 
-        # Pick dataset for this GW
-        gw_players = gw_history.get(gw) or players_df
-        if gw_players is None:
-            continue
+        # Fetch GW dataset
+        if gw in gw_history:
+            gw_players = gw_history[gw]
+        else:
+            gw_live = fetch_event_live(gw)
+            gw_players = {
+                int(el["id"]): int(el["stats"]["total_points"])
+                for el in gw_live.get("elements", [])
+            }
+            gw_history[gw] = gw_players
+            st.session_state["gw_history"] = gw_history  # persist
 
-        # Build code→id mapping for that GW
-        code_to_id = _best_code_to_id(gw_players, kb_meta or st.session_state.get("kb_meta"))
-        id_to_code = {v: k for k, v in code_to_id.items()} if code_to_id else {}
+        # Build code→points mapping for this GW
+        code_to_id = (kb_meta or st.session_state.get("kb_meta", {})).get("code_to_id", {})
+        id_to_code = {v: k for k, v in code_to_id.items()}
+        gw_points = { id_to_code.get(pid, pid): pts for pid, pts in gw_players.items() }
 
-        def ids_to_codes(lst):
-            out = []
-            for x in lst or []:
-                try:
-                    xi = int(x)
-                    out.append(int(id_to_code.get(xi, xi)))
-                except Exception:
-                    pass
-            return out
-
-        xi_codes    = list(map(int, entry.get("xi_codes") or ids_to_codes(entry.get("xi_ids"))))
-        bench_codes = list(map(int, entry.get("bench_codes") or ids_to_codes(entry.get("bench_ids") or entry.get("bench_order"))))
-        cap_code    = entry.get("captain_code")
-        if cap_code is None and entry.get("captain_id") is not None:
-            cap_code = id_to_code.get(int(entry["captain_id"]), 0)
-        cap_code = int(cap_code or 0)
-
-        chip = (entry.get("chip") or "NONE").upper()
+        # Resolve squad
+        xi_codes = list(map(int, entry.get("xi_codes") or []))
+        bench_codes = list(map(int, entry.get("bench_codes") or []))
+        cap_code = int(entry.get("captain_code") or 0)
         points_hit = int(entry.get("points_hit", 0))
 
-        # Compute points from correct GW dataset
-        new_pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id) - points_hit
+        # Compute points
+        new_pts = sum(
+            gw_points.get(code, 0) * (2 if code == cap_code else 1)
+            for code in xi_codes
+        )
+        new_pts -= points_hit
 
         # Update and lock
         if int(entry.get("points", -999999)) != int(new_pts):
             entry["points"] = int(new_pts)
-            entry["xi_codes"] = xi_codes
-            entry["bench_codes"] = bench_codes
-            entry["captain_code"] = cap_code
             entry["points_locked"] = True
             append_gw_log(user_id, gw, entry)
             updated += 1
