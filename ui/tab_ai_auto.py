@@ -311,21 +311,13 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
 
     # ---------- Maintenance ----------
     with st.expander("Maintenance", expanded=False):
-        st.caption("Recompute points for all logged GWs from official FPL history (useful after a GW finishes).")
-        if st.button("↻ Refresh points for finished GWs"):
-            n = refresh_logged_points(user_id, players_df=players_df, kb_meta=kb_meta)
-            st.success(f"Updated {n} gameweek(s).")
-            st.rerun()
-    
-        st.markdown("---")
         eid = st.text_input("FPL Entry ID (optional):", value=st.session_state.get("fpl_entry_id", ""))
         if eid:
             st.session_state.fpl_entry_id = eid
     
         if st.button("↻ Sync points & lineups from my FPL entry"):
-            try:
-                from fpl.ai_manager.decision import refresh_points_from_fpl_entry
-                n = refresh_points_from_fpl_entry(
+            try: 
+                n = refresh_logged_points(
                     user_id=user_id,
                     entry_id=int(st.session_state.get("fpl_entry_id")),
                     players_df=players_df,
