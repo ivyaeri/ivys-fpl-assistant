@@ -344,12 +344,16 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
         entry = _canonicalize_entry(raw_entry, i2c)
 
         header_bits = [
-            f"GW {entry.get('gw', '?')}",
-            f"Points: {entry.get('points', 0)}",
-            f"Bank £{float(entry.get('bank', 0.0)):.1f}",
-            f"FTs {int(entry.get('free_transfers', 0))}",
-            f"Hits {int(entry.get('points_hit', 0))}",
-        ]
+        f"GW {entry.get('gw', '?')}",
+        f"Points: {entry.get('points', 0)}",
+        f"Bank £{float(entry.get('bank', 0.0)):.1f}",
+        f"FTs {int(entry.get('free_transfers', 0))}",
+        f"Hits {int(entry.get('points_hit', 0))}",
+    ]
+        if entry.get("gw_rank"):
+            header_bits.append(f"GW rank {int(entry['gw_rank']):,}")
+        if entry.get("overall_rank"):
+            header_bits.append(f"OR {int(entry['overall_rank']):,}")
         chip = (entry.get("chip") or "NONE").upper()
         if chip != "NONE":
             header_bits.append(f"Chip {chip}")
@@ -364,14 +368,20 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             cols_meta = st.columns(5)
             cols_meta[0].metric("Points", entry.get("points", 0))
             cols_meta[1].metric("Points hit", entry.get("points_hit", 0))
-            cols_meta[2].metric("Chip", chip)
-            cols_meta[3].metric("Captain", cap_name)
-            cols_meta[4].metric("Vice captain", vice_name)
+            cols_meta[2].metric("GW rank", f"{int(entry['gw_rank']):,}" if entry.get("gw_rank") else "—")
+            cols_meta[3].metric("Overall rank", f"{int(entry['overall_rank']):,}" if entry.get("overall_rank") else "—")
+            cols_meta[4].metric("Vice captain",
+                                _pname_by_code(players_df, entry.get("vice_captain_code")) if entry.get("vice_captain_code") else "—")
 
             # ----- Bank summary (engine vs model)
             mfb = entry.get("final_bank_model", None)
             cols_bank = st.columns(2)
+            cols_bank = st.columns(3)
             cols_bank[0].markdown(f"**Engine bank (post-transfers):** £{float(entry.get('bank', 0.0)):.1f}m")
+            if entry.get("total_points_cumulative") is not None:
+                cols_bank[1].markdown(f"**Total points (cum):** {int(entry['total_points_cumulative']):,}")
+            if entry.get("team_value") is not None:
+                cols_bank[2].markdown(f"**Team value:** £{float(entry['team_value']):.1f}m")
             if mfb is not None:
                 cols_bank[1].markdown(f"**Model declared final_bank:** £{float(mfb):.1f}m")
                 try:
