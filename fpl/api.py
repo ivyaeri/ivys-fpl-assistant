@@ -34,3 +34,16 @@ def fetch_event_live(gw: int) -> dict:
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     return resp.json()
+
+def fetch_entry_event(entry_id: int, gw: int) -> dict:
+    """Official FPL endpoint: entry picks + entry_history for a given GW."""
+    r = requests.get(f"{FPL_API}/entry/{int(entry_id)}/event/{int(gw)}/picks/")
+    r.raise_for_status()
+    return r.json()
+
+def fetch_entry_history(entry_id: int) -> dict:
+    """Overall history (optional, useful if you want totals/overall rank)."""
+    r = requests.get(f"{FPL_API}/entry/{int(entry_id)}/history/")
+    r.raise_for_status()
+    return r.json()
+
