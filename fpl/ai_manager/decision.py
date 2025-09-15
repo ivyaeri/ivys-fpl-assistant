@@ -5,6 +5,8 @@ from langchain_openai import ChatOpenAI
 from fpl.api import fetch_player_history
 from fpl.ai_manager.core import SQUAD_SHAPE, MAX_PER_CLUB, VALID_FORMATIONS
 from fpl.ai_manager.persist_db import save_state, append_gw_log
+from fpl.api import fetch_player_history, fetch_entry_event  # + fetch_entry_event new
+
 
 import re, json
 from typing import Tuple, List, Dict, Any
@@ -1153,70 +1155,94 @@ def _best_code_to_id(
     if players_df is not None and "code" in players_df.columns and "id" in players_df.columns:
         return {int(c): int(i) for c, i in zip(players_df["code"], players_df["id"])}
     return {}
-from fpl.api import fetch_event_live
 
-def refresh_logged_points(
+
+def refresh_points_from_fpl_entry(
     user_id: str,
+    entry_id: int,
     players_df: pd.DataFrame | None = None,
     kb_meta: dict | None = None,
 ) -> int:
     """
-    Recompute points for all logged GWs using official FPL per-GW data.
-    Once a GW is locked, don't overwrite it again.
+    Overwrite each logged GW with OFFICIAL FPL points, armband, XI/bench, chip and bank
+    for the given FPL entry_id. No custom scoring — we trust FPL's numbers.
     """
     if "auto_mgr" not in st.session_state:
         return 0
     state = st.session_state.auto_mgr
 
-    # current season code<->id mapping
-    code_to_id = (kb_meta or st.session_state.get("kb_meta", {})).get("code_to_id", {})
-    id_to_code = {v: k for k, v in code_to_id.items()} if code_to_id else {}
+    code_to_id = _best_code_to_id(players_df, kb_meta or st.session_state.get("kb_meta"))
+    id_to_code = {v: k for k, v in (code_to_id or {}).items()}
+
+    def ic(pid):
+        try:
+            return int(id_to_code.get(int(pid), pid))
+        except Exception:
+            return 0
 
     updated = 0
     for entry in state.get("log", []):
         gw = int(entry.get("gw", 0))
-        if not gw:
+        if gw <= 0:
+            continue
+        try:
+            data = fetch_entry_event(int(entry_id), gw)
+        except Exception as e:
+            # couldn't fetch this GW; skip
             continue
 
-        if entry.get("points_locked", False):
-            continue
+        eh = data.get("entry_history", {}) or {}
+        picks = data.get("picks", []) or []
 
-        # fetch points for this GW
-        gw_points = _gw_points_map(gw, id_to_code)
+        # Sort by "position" (1..15)
+        picks_sorted = sorted(picks, key=lambda p: int(p.get("position", 0)))
 
-        xi_codes = list(map(int, entry.get("xi_codes") or []))
-        bench_codes = list(map(int, entry.get("bench_codes") or []))
-        cap_code = int(entry.get("captain_code") or 0)
-        vice_code = int(entry.get("vice_captain_code") or 0)
-        chip = (entry.get("chip") or "NONE").upper()
-        points_hit = int(entry.get("points_hit", 0))
+        # Starters = multiplier > 0 (11 players)
+        xi_ids = [p["element"] for p in picks_sorted if int(p.get("multiplier", 0)) > 0][:11]
+        # Bench = positions 12..15 in order
+        bench_ids = [p["element"] for p in picks_sorted if int(p.get("position", 0)) > 11]
+        # Squad = all 15 in order
+        squad_ids = [p["element"] for p in picks_sorted]
 
-        # base XI points with captain logic
-        new_pts = 0
-        for code in xi_codes:
-            pts = gw_points.get(code, 0)
-            if code == cap_code:
-                if chip == "TC":
-                    pts *= 3
-                else:
-                    pts *= 2
-            new_pts += pts
+        cap_id  = next((p["element"] for p in picks if p.get("is_captain")), 0)
+        vice_id = next((p["element"] for p in picks if p.get("is_vice_captain")), 0)
 
-        # bench boost
-        if chip == "BB":
-            new_pts += sum(gw_points.get(c, 0) for c in bench_codes)
+        chip_raw = (data.get("active_chip") or "").lower()
+        chip_map = {
+            "3xc": "TC",
+            "triplecaptain": "TC",
+            "bboost": "BB",
+            "benchboost": "BB",
+            # we ignore wildcard/freehit here – keep as "NONE" for the AI log
+        }
+        chip = chip_map.get(chip_raw, "NONE")
 
-        new_pts -= points_hit
+        # Overwrite our log entry with the official stuff
+        entry["points"]              = int(eh.get("points", entry.get("points", 0)))  # already net of hits
+        entry["points_hit"]          = int(eh.get("event_transfers_cost", entry.get("points_hit", 0)))
+        entry["chip"]                = chip
+        entry["xi_codes"]            = [ic(i) for i in xi_ids]
+        entry["bench_codes"]         = [ic(i) for i in bench_ids]
+        entry["squad_codes"]         = [ic(i) for i in squad_ids]
+        entry["captain_code"]        = ic(cap_id)
+        entry["vice_captain_code"]   = ic(vice_id)
 
-        if int(entry.get("points", -999999)) != int(new_pts):
-            entry["points"] = int(new_pts)
-            entry["points_locked"] = True
-            append_gw_log(user_id, gw, entry)
-            updated += 1
+        # Bank in API is tenths of a million
+        try:
+            entry["bank"] = float(eh.get("bank", entry.get("bank", 0))) / 10.0
+        except Exception:
+            pass
+
+        # Refresh the snapshots the UI uses
+        entry["snapshot_15"]    = _snapshot(players_df, entry["squad_codes"]) if players_df is not None else []
+        entry["snapshot_xi"]    = _snapshot(players_df, entry["xi_codes"]) if players_df is not None else []
+        entry["snapshot_bench"] = _snapshot(players_df, entry["bench_codes"]) if players_df is not None else []
+
+        append_gw_log(user_id, gw, entry)
+        updated += 1
 
     save_state(user_id, state)
     return updated
-
 
 def force_redraft_gw1(
     user_id: str,
