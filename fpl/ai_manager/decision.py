@@ -1157,7 +1157,7 @@ def _best_code_to_id(
     return {}
 
 
-def refresh_points_from_fpl_entry(
+def refresh_logged_points(
     user_id: str,
     entry_id: int,
     players_df: pd.DataFrame | None = None,
