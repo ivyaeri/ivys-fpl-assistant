@@ -316,6 +316,25 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             n = refresh_logged_points(user_id, players_df=players_df, kb_meta=kb_meta)
             st.success(f"Updated {n} gameweek(s).")
             st.rerun()
+    
+        st.markdown("---")
+        eid = st.text_input("FPL Entry ID (optional):", value=st.session_state.get("fpl_entry_id", ""))
+        if eid:
+            st.session_state.fpl_entry_id = eid
+    
+        if st.button("↻ Sync points & lineups from my FPL entry"):
+            try:
+                from fpl.ai_manager.decision import refresh_points_from_fpl_entry
+                n = refresh_points_from_fpl_entry(
+                    user_id=user_id,
+                    entry_id=int(st.session_state.get("fpl_entry_id")),
+                    players_df=players_df,
+                    kb_meta=kb_meta,
+                )
+                st.success(f"Synced {n} gameweek(s) from the official FPL entry.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
 
     # ---------- Debug logs from backend ----------
     if st.session_state.get("ai_mgr_logs"):
