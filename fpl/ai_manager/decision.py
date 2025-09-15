@@ -1164,8 +1164,8 @@ def refresh_logged_points(
     kb_meta: dict | None = None,
 ) -> int:
     """
-    Overwrite each logged GW with OFFICIAL FPL points, armband, XI/bench, chip and bank
-    for the given FPL entry_id. No custom scoring — we trust FPL's numbers.
+    Overwrite each logged GW with OFFICIAL FPL points, armband, XI/bench, chip, bank,
+    and now GW rank + overall rank for the given FPL entry_id.
     """
     if "auto_mgr" not in st.session_state:
         return 0
@@ -1187,21 +1187,17 @@ def refresh_logged_points(
             continue
         try:
             data = fetch_entry_event(int(entry_id), gw)
-        except Exception as e:
-            # couldn't fetch this GW; skip
+        except Exception:
             continue
 
-        eh = data.get("entry_history", {}) or {}
+        eh    = data.get("entry_history", {}) or {}
         picks = data.get("picks", []) or []
 
-        # Sort by "position" (1..15)
+        # Sort by position 1..15 for bench order fidelity
         picks_sorted = sorted(picks, key=lambda p: int(p.get("position", 0)))
 
-        # Starters = multiplier > 0 (11 players)
-        xi_ids = [p["element"] for p in picks_sorted if int(p.get("multiplier", 0)) > 0][:11]
-        # Bench = positions 12..15 in order
+        xi_ids    = [p["element"] for p in picks_sorted if int(p.get("multiplier", 0)) > 0][:11]
         bench_ids = [p["element"] for p in picks_sorted if int(p.get("position", 0)) > 11]
-        # Squad = all 15 in order
         squad_ids = [p["element"] for p in picks_sorted]
 
         cap_id  = next((p["element"] for p in picks if p.get("is_captain")), 0)
@@ -1209,23 +1205,34 @@ def refresh_logged_points(
 
         chip_raw = (data.get("active_chip") or "").lower()
         chip_map = {
-            "3xc": "TC",
-            "triplecaptain": "TC",
-            "bboost": "BB",
-            "benchboost": "BB",
-            # we ignore wildcard/freehit here – keep as "NONE" for the AI log
+            "3xc": "TC", "triplecaptain": "TC",
+            "bboost": "BB", "benchboost": "BB",
+            # freehit/wildcard are entry-level chips; keep as "NONE" for AI log consistency
         }
         chip = chip_map.get(chip_raw, "NONE")
 
-        # Overwrite our log entry with the official stuff
-        entry["points"]              = int(eh.get("points", entry.get("points", 0)))  # already net of hits
-        entry["points_hit"]          = int(eh.get("event_transfers_cost", entry.get("points_hit", 0)))
-        entry["chip"]                = chip
-        entry["xi_codes"]            = [ic(i) for i in xi_ids]
-        entry["bench_codes"]         = [ic(i) for i in bench_ids]
-        entry["squad_codes"]         = [ic(i) for i in squad_ids]
-        entry["captain_code"]        = ic(cap_id)
-        entry["vice_captain_code"]   = ic(vice_id)
+        # Core numbers from FPL (already include autosubs, captain, hits)
+        entry["points"]     = int(eh.get("points",        entry.get("points", 0)))
+        entry["points_hit"] = int(eh.get("event_transfers_cost", entry.get("points_hit", 0)))
+        entry["chip"]       = chip
+
+        # New: ranks
+        if eh.get("rank") is not None:
+            entry["gw_rank"] = int(eh["rank"])
+        if eh.get("overall_rank") is not None:
+            entry["overall_rank"] = int(eh["overall_rank"])
+
+        # Nice-to-haves
+        if eh.get("total_points") is not None:
+            entry["total_points_cumulative"] = int(eh["total_points"])
+        if eh.get("points_on_bench") is not None:
+            entry["points_on_bench"] = int(eh["points_on_bench"])
+        if eh.get("value") is not None:
+            # 'value' is tenths of a million (e.g., 1000 -> £100.0m)
+            try:
+                entry["team_value"] = float(eh["value"]) / 10.0
+            except Exception:
+                pass
 
         # Bank in API is tenths of a million
         try:
@@ -1233,10 +1240,17 @@ def refresh_logged_points(
         except Exception:
             pass
 
-        # Refresh the snapshots the UI uses
-        entry["snapshot_15"]    = _snapshot(players_df, entry["squad_codes"]) if players_df is not None else []
-        entry["snapshot_xi"]    = _snapshot(players_df, entry["xi_codes"]) if players_df is not None else []
-        entry["snapshot_bench"] = _snapshot(players_df, entry["bench_codes"]) if players_df is not None else []
+        # Convert IDs -> codes for our UI/log
+        entry["xi_codes"]          = [ic(i) for i in xi_ids]
+        entry["bench_codes"]       = [ic(i) for i in bench_ids]
+        entry["squad_codes"]       = [ic(i) for i in squad_ids]
+        entry["captain_code"]      = ic(cap_id)
+        entry["vice_captain_code"] = ic(vice_id)
+
+        # Refresh snapshots the UI uses
+        entry["snapshot_15"]    = _snapshot(players_df, entry["squad_codes"])  if players_df is not None else []
+        entry["snapshot_xi"]    = _snapshot(players_df, entry["xi_codes"])     if players_df is not None else []
+        entry["snapshot_bench"] = _snapshot(players_df, entry["bench_codes"])  if players_df is not None else []
 
         append_gw_log(user_id, gw, entry)
         updated += 1
