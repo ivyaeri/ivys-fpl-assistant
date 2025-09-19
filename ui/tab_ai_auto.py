@@ -365,7 +365,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             cap_name  = _pname_by_code(players_df, entry.get("captain_code")) if entry.get("captain_code") else "—"
             vice_name = _pname_by_code(players_df, entry.get("vice_captain_code")) if entry.get("vice_captain_code") else "—"
 
-            cols_meta = st.columns(5)
+            cols_meta = st.columns(6)
             cols_meta[0].metric("Points", entry.get("points", 0))
             cols_meta[1].metric("Points hit", entry.get("points_hit", 0))
             cols_meta[2].metric("GW rank", f"{int(entry['gw_rank']):,}" if entry.get("gw_rank") else "—")
