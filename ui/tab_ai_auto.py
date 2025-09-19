@@ -370,8 +370,8 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             cols_meta[1].metric("Points hit", entry.get("points_hit", 0))
             cols_meta[2].metric("GW rank", f"{int(entry['gw_rank']):,}" if entry.get("gw_rank") else "—")
             cols_meta[3].metric("Overall rank", f"{int(entry['overall_rank']):,}" if entry.get("overall_rank") else "—")
-            cols_meta[4].metric("Vice captain",
-                                _pname_by_code(players_df, entry.get("vice_captain_code")) if entry.get("vice_captain_code") else "—")
+            cols_meta[4].metric("Vice captain",vice_name)
+            cols_meta[5].metric("Captain",cap_name)
 
             # ----- Bank summary (engine vs model)
             mfb = entry.get("final_bank_model", None)
