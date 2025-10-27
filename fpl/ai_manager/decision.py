@@ -467,9 +467,9 @@ def _llm(model_name: str) -> ChatOpenAI:
     Compatible ChatOpenAI init for newer and older langchain_openai versions.
     """
     try:
-        return ChatOpenAI(model=model_name, api_key=st.session_state.openai_key)
+        return ChatOpenAI(model=model_name, api_key=st.session_state.openai_key,temperature=1)
     except TypeError:
-        return ChatOpenAI(model_name=model_name, openai_api_key=st.session_state.openai_key)
+        return ChatOpenAI(model_name=model_name, openai_api_key=st.session_state.openai_key,temperature=1)
 
 # ---------- prompts (return CODES) ----------
 def draft_initial_squad(
