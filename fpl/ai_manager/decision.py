@@ -2,11 +2,9 @@
 import streamlit as st
 import pandas as pd
 from langchain_openai import ChatOpenAI
-from fpl.api import fetch_player_history
+from fpl.api import fetch_player_history, fetch_entry_event, fetch_event_live  # include fetch_event_live
 from fpl.ai_manager.core import SQUAD_SHAPE, MAX_PER_CLUB, VALID_FORMATIONS
 from fpl.ai_manager.persist_db import save_state, append_gw_log
-from fpl.api import fetch_player_history, fetch_entry_event  # + fetch_entry_event new
-
 
 import re, json
 from typing import Tuple, List, Dict, Any
@@ -19,6 +17,7 @@ import typing as _t
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
 def _gw_points_map(gw: int, id_to_code: dict) -> dict[int, int]:
     """Return {code: total_points} mapping for a specific GW."""
     live = fetch_event_live(gw)
@@ -30,7 +29,6 @@ def _gw_points_map(gw: int, id_to_code: dict) -> dict[int, int]:
         points[code] = int(el["stats"].get("total_points", 0))
     return points
 
-
 def _gw_deadline_utc(kb_meta: dict, gw: int) -> _t.Optional[datetime]:
     """
     Try to fetch the GW deadline (UTC) from kb_meta. If not present, return None.
@@ -40,14 +38,12 @@ def _gw_deadline_utc(kb_meta: dict, gw: int) -> _t.Optional[datetime]:
     """
     if not isinstance(kb_meta, dict):
         return None
-    # exact value for current gw
     if kb_meta.get("deadline_utc"):
         try:
             d = kb_meta["deadline_utc"]
             return d if isinstance(d, datetime) else datetime.fromisoformat(str(d))
         except Exception:
             pass
-    # map of all deadlines
     dmap = kb_meta.get("deadlines") or kb_meta.get("deadline_by_gw") or {}
     if gw in dmap:
         try:
@@ -64,7 +60,7 @@ def _ensure_checkpoint(state: dict, gw: int, kb_meta: dict) -> None:
     state.setdefault("checkpoints", {})
     key = str(int(gw))
     if key in state["checkpoints"]:
-        return  # already saved for this GW
+        return
     d = _gw_deadline_utc(kb_meta, gw)
     snap = {
         "gw": int(gw),
@@ -87,7 +83,6 @@ def _restore_checkpoint_if_allowed(state: dict, gw: int, kb_meta: dict) -> tuple
     if not snap:
         return False, "No checkpoint for this GW."
 
-    # enforce deadline if we have it
     d_iso = snap.get("deadline_utc")
     if d_iso:
         try:
@@ -95,9 +90,8 @@ def _restore_checkpoint_if_allowed(state: dict, gw: int, kb_meta: dict) -> tuple
             if _utc_now() > d:
                 return False, "Deadline passed; keeping committed state."
         except Exception:
-            pass  # if parsing fails, fall through and allow restore
+            pass
 
-    # restore fields
     state["squad"] = list(map(int, snap.get("squad", [])))
     state["bank"] = float(snap.get("bank", 0.0))
     state["free_transfers"] = int(snap.get("free_transfers", 0))
@@ -115,18 +109,13 @@ def _json_from_text(s: str) -> dict:
     if not s:
         return {}
     s = s.strip()
-    # strip code fences
     if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.I | re.M)
-        s = s.strip()
-
-    # try direct parse
+        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.I | re.M).strip()
     try:
         return json.loads(s)
     except Exception:
         pass
 
-    # fallback: find last balanced JSON object
     last = None
     level = 0
     start = -1
@@ -160,7 +149,6 @@ def _snapshot(players_df: pd.DataFrame, codes: list[int]) -> list[dict]:
         return []
     keep = [c for c in cols if c in sub.columns]
     sub = sub[keep].sort_values(["pos","web_name"])
-    # records for Streamlit UI
     return sub.to_dict(orient="records")
 
 def _ensure_maps(players_df: pd.DataFrame) -> Tuple[Dict[int,int], Dict[int,int]]:
@@ -238,6 +226,60 @@ def _maybe_migrate_state_to_codes(state: dict, players_df: pd.DataFrame) -> bool
         return True
     return False
 
+# ---------- NEW: helpers for chip math / WC-FH / performance ----------
+
+def _team_value(players_df: pd.DataFrame, codes: list[int]) -> float:
+    """Sum current prices of a code list (in £m)."""
+    if not codes:
+        return 0.0
+    sub = players_df[players_df["code"].isin(list(map(int, codes)))]
+    if sub.empty:
+        return 0.0
+    return float(sub["price"].sum())
+
+def _pair_transfers_for_log(old_codes: list[int], new_codes: list[int]) -> list[dict]:
+    """
+    Produce a rough list of {out_code, in_code} pairs for logging diffs when WC
+    (informational only).
+    """
+    outs = [c for c in old_codes if c not in set(new_codes)]
+    ins  = [c for c in new_codes if c not in set(old_codes)]
+    n = min(len(outs), len(ins))
+    return [{"out_code": int(outs[i]), "in_code": int(ins[i])} for i in range(n)]
+
+def _recent_performance(state: dict, n_recent: int = 3, n_prev: int = 3) -> dict:
+    """
+    Compute simple trend metrics from state['log'].
+    Returns {"last_points": [...], "recent_avg": float, "prev_avg": float|None, "stagnating": bool, "summary": str}
+    """
+    logs = sorted([e for e in state.get("log", []) if isinstance(e, dict) and "points" in e],
+                  key=lambda x: int(x.get("gw", 0)))
+    pts = [int(e.get("points", 0)) for e in logs]
+    if not pts:
+        return {"last_points": [], "recent_avg": 0.0, "prev_avg": None, "stagnating": False, "summary": "No history."}
+
+    last = pts[-n_recent:] if len(pts) >= n_recent else pts[:]
+    recent_avg = sum(last) / max(1, len(last))
+
+    prev_slice = pts[-(n_recent + n_prev):-n_recent] if len(pts) >= (n_recent + n_prev) else []
+    prev_avg = (sum(prev_slice) / len(prev_slice)) if prev_slice else None
+
+    low_spread = (max(last) - min(last) <= 6) if len(last) >= 2 else False
+    stagnating = (prev_avg is not None and recent_avg <= prev_avg) or low_spread
+
+    summary = f"Last {len(last)} GWs points: {last} | avg={recent_avg:.1f}"
+    if prev_avg is not None:
+        summary += f" | prev{len(prev_slice)} avg={prev_avg:.1f}"
+    summary += " | trend=" + ("STAGNATING" if stagnating else "OK")
+
+    return {
+        "last_points": last,
+        "recent_avg": float(recent_avg),
+        "prev_avg": (float(prev_avg) if prev_avg is not None else None),
+        "stagnating": bool(stagnating),
+        "summary": summary,
+    }
+
 # ---------- drafting helpers ----------
 
 def _players_table_for_draft(players_df: pd.DataFrame) -> str:
@@ -271,6 +313,7 @@ def _players_table_for_draft(players_df: pd.DataFrame) -> str:
     return tab.to_csv(index=False)
 
 # ---------- validation (CODES, not ids) ----------
+
 def _validate_initial(players_df: pd.DataFrame, codes: List[int], budget: float = 100.0) -> Tuple[bool,str]:
     if not isinstance(codes, list) or len(codes) != 15:
         return False, "Need 15 codes."
@@ -462,16 +505,39 @@ def _compute_points(
         total += sum(_event_points(int(c), gw, code_to_id) for c in bench_codes)
     return int(total)
 
-def _llm(model_name: str) -> ChatOpenAI:
+# ---------- LLM loader (latest models, temp-aware) ----------
+
+def _llm(model_name: str = "gpt-4o-mini") -> ChatOpenAI:
     """
-    Compatible ChatOpenAI init for newer and older langchain_openai versions.
+    Universal ChatOpenAI loader compatible with all current GPT models.
+    Automatically adjusts temperature depending on model capabilities.
     """
+    import re
+    api_key = getattr(st.session_state, "openai_key", None)
+    if not api_key:
+        raise RuntimeError("Missing OpenAI API key in st.session_state.openai_key")
+
+    def _mk(**kw):
+        try:
+            return ChatOpenAI(model=model_name, api_key=api_key, **kw)
+        except TypeError:
+            return ChatOpenAI(model_name=model_name, openai_api_key=api_key, **kw)
+
+    # Models that typically lock temperature (omit temp entirely)
+    locked = re.compile(r"^(gpt-5|gpt-4\.1|gpt-4o-reasoning|o[34])", re.I).match(model_name)
+    if locked:
+        return _mk(temperature=1)
+
+    # Otherwise try a gentle temp, with fallback
     try:
-        return ChatOpenAI(model=model_name, api_key=st.session_state.openai_key,temperature=1)
-    except TypeError:
-        return ChatOpenAI(model_name=model_name, openai_api_key=st.session_state.openai_key,temperature=1)
+        return _mk(temperature=0.2)
+    except Exception as e:
+        if "temperature" in str(e).lower() and ("unsupported" in str(e).lower() or "does not support" in str(e).lower()):
+            return _mk(temperature=1)
+        raise
 
 # ---------- prompts (return CODES) ----------
+
 def draft_initial_squad(
     players_df: pd.DataFrame,
     kb_text: str,
@@ -542,7 +608,6 @@ Rules:
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     obj = _json_from_text(raw)
     if not obj:
-        # retry once with a shorter user block
         raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr[:8000]}]).content
         obj = _json_from_text(raw)
     if not obj:
@@ -564,7 +629,10 @@ def weekly_decision(
     gw: int,
     extra_instructions: str | None = None,
 ) -> dict:
-    """Allow zero-or-more transfers, bench ordering, and chip (TC/BB). Uses CODES."""
+    """
+    Allow zero-or-more transfers, bench ordering, and chip (TC/BB/FH/WC/NONE). Uses CODES.
+    If chip == "WC" the model MAY return full 15 as "wildcard_squad_codes".
+    """
     if not st.session_state.openai_key:
         return {"error":"no_api"}
     if "code" not in players_df.columns:
@@ -582,10 +650,20 @@ def weekly_decision(
     if note:
         note = note[:800]
 
+    # performance context
+    perf = _recent_performance(state, n_recent=3, n_prev=3)
+    perf_summary = perf["summary"]
+
     sys = (
         "You are an autonomous FPL manager. "
+        "You must choose the optimal chip (including Wildcard or Free Hit) or NONE. "
         "Return STRICT JSON only. No markdown, no comments. Use player CODES."
     )
+
+    hit_cost = int(state.get("hit_cost", HIT_COST_DEFAULT))
+    max_hit = int(state.get("max_hit", 0))
+    free_transfers = int(state.get("free_transfers", 0))
+
     usr = f"""
 FPL MASTER STRATEGIST - GW{gw} OPTIMAL DECISION ENGINE
 
@@ -593,95 +671,34 @@ You are an elite FPL manager with deep statistical knowledge. Your goal: MAXIMIZ
 
 ══════════ CURRENT STATE ══════════
 Squad: {table}
-Bank: £{state['bank']:.1f}m | Free Transfers: {state['free_transfers']} | Chips: {chips}
+Bank: £{state['bank']:.1f}m | Free Transfers: {free_transfers} | Chips Available: {chips}
 
-══════════ CRITICAL SUCCESS FACTORS ══════════
+══════════ PERFORMANCE SNAPSHOT ══════════
+{perf_summary}
 
-**POINTS MAXIMIZATION HIERARCHY:**
-1. **Starting XI Strength** - Your 11 must be point machines
-2. **Budget Optimization** - NEVER waste money in bank (max 1.0m buffer)
-3. **Fixture Leverage** - Target easiest opponents & attacking situations
-4. **Form Over Fame** - In-form £6m > Out-of-form £10m
-5. **Template Balance** - Mix of safe picks + differentials for rank moves
+**AGGRESSION POLICY (Triggered by Stagnation):**
+- If trend shows stagnation or decline, consider **bold structural changes**:
+  - Proactively use **Wildcard (WC)** to rebuild the 15 if that yields higher EV over the next 3–5 GWs.
+  - Take **calculated hits** (paid transfers) up to max_hit when **net_gain_estimate > 0** and meaningful (≥ 2–3 pts).
+  - Consider **Free Hit (FH)** if this GW’s fixtures are exceptionally favorable for a one-week punt, with no long-term cost.
+- Prioritize removing persistent underperformers and consolidating budget into high-ceiling starters.
 
-**MANDATORY ANALYSIS CHECKLIST:**
+**HIT POLICY (Paid Transfers):**
+- Each transfer beyond the available Free Transfers costs {hit_cost} points.
+- Only take hits when the expected net gain (points gained minus hit cost) is positive and meaningful (≥ 2–3 pts).
+- Respect a hard cap if set: max_hit = {max_hit} points this GW.
 
-**FIXTURE INTELLIGENCE (Next 3-5 GWs):**
-- FDR ratings: 1-2 (green) = prioritize, 4-5 (red) = avoid
-- Home advantage vs defensive strength
-- Goals conceded trends (attack targets)
-- Clean sheet probability (defensive targets)
+**CHIP RULES:**
+- "NONE": normal transfers; hits apply.
+- "TC": Triple Captain; normal transfers; hits apply.
+- "BB": Bench Boost; normal transfers; hits apply.
+- "FH": Free Hit; unlimited transfers this GW only; NO hit; do NOT consume free transfers; squad reverts after the GW; must remain valid.
+- "WC": Wildcard; you may either list transfers OR return a full fresh 15 in "wildcard_squad_codes"; NO hit; do NOT consume free transfers; squad persists.
 
-**FORM & EXPECTED PERFORMANCE:**
-- Points last 3 GWs vs season average
-- xG/xA vs actual (over/underperformance)
-- Minutes played % (rotation risk)
-- Bonus point magnets (shots, key passes, defensive actions)
-
-**VALUE ENGINEERING:**
-- Points per million spent efficiency
-- Budget enablers performing above price point
-- Premium assets justifying cost vs cheaper alternatives
-- Price change momentum (rising/falling)
-
-**OWNERSHIP PSYCHOLOGY:**
-- Template players (safe but limited upside)
-- Differentials with explosive potential (5-15% owned)
-- Captaincy options beyond obvious choices
-- Anti-template opportunities (fading popular picks in bad fixtures)
-
-**POSITIONAL OPTIMIZATION:**
-- GK: Fixtures + save potential + penalty save history
-- DEF: Clean sheets + attacking returns + BPS potential  
-- MID: Goals/assists + set pieces + advanced positions
-- FWD: Shot volume + big chances + supporting cast quality
-
-**BUDGET MAXIMIZATION RULES:**
-- Bank should be £0.0-1.0m (emergency buffer only)
-- Every unused million = ~2-3 points lost per GW
-- Upgrade path: Identify weakest starter, find best replacement in budget
-- Value traps: Expensive benchwarmer vs playing budget option
-
-**STRATEGIC THINKING:**
-
-**Template Disruption:**
-- When template fails: Be contrarian on popular picks with bad fixtures
-- Differential captaincy: Target 5-20% owned in good spots
-- Rank climbing: Take calculated risks when behind
-
-**Risk Management:**
-- Rotation prone players before busy periods
-- Injury concerns from recent games/internationals
-- New signings adaptation period
-- Tactical changes affecting player roles
-
-**Long-term Setup:**
-- Building toward DGWs (2-3 GWs ahead)
-- Wildcard timing optimization
-- Team value growth through price rises
-
-══════════ DECISION FRAMEWORK ══════════
-
-**TRANSFER PRIORITY MATRIX:**
-1. Remove: Injured/suspended/not playing
-2. Remove: Playing but terrible fixtures (FDR 4-5)
-3. Remove: Expensive underperformers vs budget alternatives  
-4. Add: In-form players with great fixtures
-5. Add: Budget gems outperforming price point
-6. Add: Differentials with explosive upside
-
-**FORMATION SELECTION:**
-Choose based on your best 11 players, not rigid structures:
-- 3-5-2: Strong midfield, weak forward depth
-- 4-4-2: Balanced, two strong forwards
-- 3-4-3: Premium forward heavy
-- 5-4-1: Defensive fixtures, one premium forward
-
-**CAPTAINCY ALGORITHM:**
-1. Highest ceiling (goals/assists potential)
-2. Best fixture (FDR 1-2, home advantage)
-3. Current form (points last 3 GWs)
-4. Ownership consideration (template vs differential)
+**VALIDITY RULES:**
+- Like-for-like positions for standard transfers (NONE/TC/BB/FH/WC-without-redraft).
+- ≤3 players per club at all times; budget respected.
+- XI must be valid formation with exactly 1 GK; XI+bench = 15, disjoint.
 
 KNOWLEDGE BASE:
 {kb_text}
@@ -689,33 +706,24 @@ KNOWLEDGE BASE:
 MANAGER DIRECTIVE:
 {note if note else f"Maximize GW{gw} points while optimizing budget usage"}
 
-══════════ ELITE OUTPUT REQUIRED ══════════
-STRICT OUTPUT CONTRACT — READ CAREFULLY
-
-- Output MUST be a single valid JSON object.
-- No markdown, code fences, comments, or extra prose before/after the JSON.
-- Use player CODES only (from the Squad table above).
-- All keys below are REQUIRED; types must be exact (numbers as numbers, not strings).
-- xi_codes + bench_codes must be disjoint and together cover all 15 current squad codes.
-- Exactly 1 GK in xi_codes; formation must be valid (e.g., 3-4-3, 3-5-2, 4-4-2, 4-5-1, 5-4-1).
-- captain_code and vice_captain_code must be different and both inside xi_codes.
-- Every transfer must be like-for-like by position, ≤3 per club after application, and within budget.
-- final_bank must equal starting bank ± price deltas from transfers (≥ 0.0), and keep ≤ £1.0m unless strongly justified.
-- transfer_reasons must be a list of strings in the same order as transfers.
-- If making no transfers, return "transfers": [] and set final_bank to the current bank.
-
-Return EXACTLY this JSON shape (all keys required):
+══════════ STRICT OUTPUT CONTRACT ══════════
+Output MUST be a single valid JSON object. Use player CODES only. Include ALL keys below:
 
 {{
   "schema_version": "v2",
 
-  "chip": "NONE" | "TC" | "BB",
+  "chip": "NONE" | "TC" | "BB" | "FH" | "WC",
   "transfers": [{{"out_code": <int>, "in_code": <int>}}],
 
   "xi_codes": [<11 ints>],
   "bench_codes": [<4 ints>],
   "captain_code": <int>,
   "vice_captain_code": <int>,
+
+  "hit_points_cost": <int>,              // = max(0, len(transfers)-{free_transfers})*{hit_cost} for NONE/TC/BB, else 0 for FH/WC
+  "expected_points_gain": <float>,       // model-estimated gain from transfers/bench/captain/chip vs holding
+  "net_gain_estimate": <float>,          // expected_points_gain - hit_points_cost
+  "hit_rationale": "<1-3 lines on why paying the hit is worth it>",
 
   "reason": "<2-3 sentence high-level approach>",
   "bench_reason": "<bench ordering logic>",
@@ -747,20 +755,19 @@ Return EXACTLY this JSON shape (all keys required):
   "next_gw_setup": "<how this prepares you for GW{gw+1}>",
 
   "final_bank": <float>,
-  "budget_efficiency_score": <int>
+  "budget_efficiency_score": <int>,
+
+  "wildcard_squad_codes": [<15 ints>]  // OPTIONAL; ONLY include when chip == "WC"
 }}
 
-══════════ VALIDATION CHECKLIST (apply before you print JSON) ══════════
-- JSON only; no extra text.
-- All required keys present and non-null.
-- xi_codes has 11, bench_codes has 4; union = 15; intersection = ∅.
-- Exactly 1 GK in xi_codes; valid DEF-MID-FWD counts (e.g., 3-4-3 / 3-5-2 / 4-4-2 / 4-5-1 / 5-4-1).
-- captain_code and vice_captain_code ∈ xi_codes and are different.
-- Each transfer is like-for-like by position; resulting squad obeys ≤3 per club and budget.
-- transfer_reasons aligns one-to-one (same order) with transfers.
-- final_bank computed from listed transfers using prices in the Squad table; ≥ 0.0.
-- budget_efficiency_score is an integer 1–10 (≥ 8 if you keep >£1.0m, justify in budget_optimization).
+VALIDATION CHECKLIST:
+- JSON only, no extra text.
+- For FH: unlimited transfers, hit_points_cost=0, free_transfers unchanged, squad reverts after GW.
+- For WC: either list transfers OR provide wildcard_squad_codes (exactly 15, valid 2/5/5/3, ≤3 per club, total price ≤ team_value+bank).
+- For NONE/TC/BB: hit_points_cost == max(0, len(transfers)-{free_transfers})*{hit_cost}; if > {max_hit}, reduce transfers or set [].
+- net_gain_estimate must be > 0 to justify taking hits; otherwise avoid hits.
 """
+
     raw = llm.invoke([{"role":"system","content":sys},{"role":"user","content":usr}]).content
     obj = _json_from_text(raw)
     if not obj:
@@ -791,6 +798,7 @@ Return EXACTLY this JSON shape (all keys required):
     return obj
 
 # ---------- orchestration (codes) ----------
+
 def ensure_initial_squad_with_ai(
     user_id: str,
     players_df: pd.DataFrame,
@@ -799,7 +807,6 @@ def ensure_initial_squad_with_ai(
     budget: float = 100.0,
 ):
     """If no squad, ask LLM to draft one. Stores CODES in state."""
-    # one-time: migrate any legacy id-based state to codes
     if "auto_mgr" in st.session_state and st.session_state.auto_mgr:
         if _maybe_migrate_state_to_codes(st.session_state.auto_mgr, players_df):
             save_state(user_id, st.session_state.auto_mgr)
@@ -881,12 +888,12 @@ def run_ai_auto_until_current(
     """
     Advance from last_gw_processed+1 → current GW (codes).
     FT accrual happens at the START of each GW (except GW1) and only once per GW.
+    AI chooses chips (WC/FH/TC/BB/NONE). FH reverts after logging; WC persists.
     """
     if "auto_mgr" not in st.session_state:
         return
     state = st.session_state.auto_mgr
 
-    # one-time compat migration if needed
     if _maybe_migrate_state_to_codes(state, players_df):
         save_state(user_id, state)
 
@@ -911,14 +918,11 @@ def run_ai_auto_until_current(
             break
 
         if gw > 1 and state.get("last_ft_accrual_gw") != gw:
-            # FPL caps free transfers at 5
             state["free_transfers"] = min(5, state["free_transfers"] + 1)
             state["last_ft_accrual_gw"] = gw
 
-        # Save checkpoint for this GW
         _ensure_checkpoint(state, gw, kb_meta)
 
-        # Guard against manual drift since previous GW
         prev = next((e for e in state.get("log", []) if int(e.get("gw", -1)) == int(gw) - 1), None)
         if prev and prev.get("squad_codes"):
             prev_squad = set(map(int, prev["squad_codes"]))
@@ -927,7 +931,6 @@ def run_ai_auto_until_current(
             drift_add = list(cp_squad - prev_squad)
             drift_del = list(prev_squad - cp_squad)
             if drift_add or drift_del:
-                # auto-restore baseline
                 state["squad"] = sorted(prev_squad)
                 state["checkpoints"][cp_key]["squad"] = state["squad"]
 
@@ -947,41 +950,89 @@ def run_ai_auto_until_current(
             st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] Decision error: {dec.get('error')}")
             break
 
+        # ---- Chip normalization & availability ----
+        chip_raw = (dec.get("chip") or "NONE").upper()
+        if chip_raw not in ("NONE", "TC", "BB", "FH", "WC"):
+            chip_raw = "NONE"
+        available = state.get("chips", {})
+        if chip_raw in ("TC","BB") and not available.get(chip_raw, False):
+            chip_raw = "NONE"
+        if chip_raw == "FH" and not available.get("FH", False):
+            chip_raw = "NONE"
+        if chip_raw == "WC" and not (available.get("WC1", False) or available.get("WC2", False)):
+            chip_raw = "NONE"
+
         transfers = dec.get("transfers") or []
-        ok, msg, new_bank, new_squad = _validate_transfers(
-            players_df, state["squad"], state["bank"], transfers
-        )
 
-        before = set(map(int, state["checkpoints"][str(int(gw))]["squad"]))
-        after  = set(map(int, new_squad))
-        expected_changes = 2 * len(transfers)  # each swap adds +1 and removes +1
+        # ---- WC: optional full redraft ----
+        wildcard_new = []
+        if chip_raw == "WC":
+            wildcard_new = list(map(int, dec.get("wildcard_squad_codes") or []))
+            if len(wildcard_new) == 15:
+                # WC budget = current team value + bank
+                current_value = _team_value(players_df, state["squad"])
+                wc_cost = _team_value(players_df, wildcard_new)
+                ok_wc, why_wc = _validate_initial(players_df, wildcard_new, budget=current_value + float(state["bank"]))
+                if not ok_wc:
+                    st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] WC redraft invalid: {why_wc}. Falling back to transfer path.")
+                    wildcard_new = []
+            else:
+                wildcard_new = []
 
-        if len(before ^ after) != expected_changes:
-            # proceed anyway; just log it for debugging
-            st.session_state.setdefault("ai_mgr_logs", []).append(
-                f"[GW{gw}] Unexpected change-count: expected {expected_changes}, got {len(before ^ after)}"
+        # ---- Apply transfers or WC redraft ----
+        if wildcard_new:
+            ok = True
+            msg = "WC redraft applied."
+            new_squad = list(map(int, wildcard_new))
+            new_bank  = float(_team_value(players_df, state["squad"]) + state["bank"] - _team_value(players_df, new_squad))
+        else:
+            ok, msg, new_bank, new_squad = _validate_transfers(
+                players_df, state["squad"], state["bank"], transfers
             )
+
         if not ok:
             st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] Transfer validation failed: {msg}")
             break
 
+        # ---- Hit math & trimming ----
         hit_cost = int(state.get("hit_cost", HIT_COST_DEFAULT))
         free_now = int(state.get("free_transfers", 0))
-        t_count = len(transfers)
-        points_hit = max(0, t_count - free_now) * hit_cost
 
-        max_hit = int(state.get("max_hit", 1000))
-        if points_hit > max_hit:
-            st.session_state.setdefault("ai_mgr_logs", []).append(
-                f"[GW{gw}] Hit {points_hit} exceeds max_hit {max_hit}; aborting."
-            )
-            break
+        def _hit_points(num_tx: int) -> int:
+            return max(0, num_tx - free_now) * hit_cost
 
-        state["squad"] = new_squad
+        if chip_raw in ("FH", "WC") or wildcard_new:
+            points_hit = 0
+        else:
+            # Trim transfers (drop from end) until within max_hit cap
+            max_hit = int(state.get("max_hit", 1000))
+            points_hit = _hit_points(len(transfers))
+            if points_hit > max_hit:
+                original = list(transfers)
+                while transfers and _hit_points(len(transfers)) > max_hit:
+                    transfers.pop()
+                # re-apply transfers after trimming to recompute bank/squad
+                ok, msg, new_bank, new_squad = _validate_transfers(
+                    players_df, state["squad"], state["bank"], transfers
+                )
+                points_hit = _hit_points(len(transfers))
+                st.session_state.setdefault("ai_mgr_logs", []).append(
+                    f"[GW{gw}] Trimmed transfers from {len(original)}→{len(transfers)} to respect max_hit={max_hit} (hit now {points_hit})."
+                )
+                if not ok:
+                    st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] Transfer re-validate failed after trim: {msg}")
+                    break
+
+        # ---- Persist squad/bank and consume FTs (except FH/WC) ----
+        state["squad"] = list(map(int, new_squad))
         state["bank"]  = float(new_bank)
-        consumed_fts = min(t_count, free_now)
-        state["free_transfers"] = max(0, free_now - consumed_fts)
+        if chip_raw in ("FH", "WC") or wildcard_new:
+            consumed_fts = 0
+        else:
+            consumed_fts = min(len(transfers), free_now)
+            state["free_transfers"] = max(0, free_now - consumed_fts)
 
+        # ---- Lineup validation ----
         xi_codes = list(map(int, dec.get("xi_codes") or []))
         bench_codes = list(map(int, dec.get("bench_codes") or dec.get("bench_order") or []))
         ok, why = _validate_lineup(players_df, state["squad"], xi_codes, bench_codes)
@@ -997,45 +1048,45 @@ def run_ai_auto_until_current(
         if vice_code and vice_code not in xi_codes:
             st.session_state.setdefault("ai_mgr_logs", []).append(f"[GW{gw}] Vice not in XI; continuing, but check prompt.")
 
-        chip = (dec.get("chip") or "NONE").upper()
-        if chip not in ("NONE", "TC", "BB"):
-            chip = "NONE"
-        if chip in ("TC", "BB") and not state["chips"].get(chip, False):
-            chip = "NONE"
-
-        pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id) - points_hit
-
+        chip = chip_raw
+        # consume chips
         if chip in ("TC", "BB"):
             state["chips"][chip] = False
+        if chip == "FH":
+            state["chips"]["FH"] = False
+        if chip == "WC":
+            if state["chips"].get("WC1", False):
+                state["chips"]["WC1"] = False
+            elif state["chips"].get("WC2", False):
+                state["chips"]["WC2"] = False
+
+        # ---- Points (FH/WC already set to no hit above) ----
+        pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id) - points_hit
 
         # snapshots for UI
-        snap_after  = _snapshot(players_df, new_squad)
+        snap_after  = _snapshot(players_df, state["squad"])
         snap_xi     = _snapshot(players_df, xi_codes)
         snap_bench  = _snapshot(players_df, bench_codes)
 
-        # ---- Gather ALL JSON fields the model returned ----
-        # legacy/UI keys with aliases
+        # ---- Rich model fields (optional) ----
         reason = dec.get("reason") or dec.get("strategy_summary") or ""
         bench_reason = dec.get("bench_reason") or dec.get("bench_strategy") or ""
-
-        # normalize transfer_reasons -> list[str]
         transfer_reasons = dec.get("transfer_reasons")
-        if not (isinstance(transfer_reasons, list) and all(isinstance(x, str) for x in transfer_reasons or [])):
+        if not (isinstance(transfer_reasons, list) and all(isinstance(x, str) for x in (transfer_reasons or []))):
             transfer_reasons = []
             for x in dec.get("transfer_breakdown") or []:
                 if isinstance(x, dict):
                     outn = x.get("out") or x.get("out_name") or x.get("out_code") or "?"
                     inn  = x.get("in")  or x.get("in_name")  or x.get("in_code")  or "?"
-                    why  = x.get("reason") or x.get("rationale") or ""
+                    whyx = x.get("reason") or x.get("rationale") or ""
                     ri   = x.get("risk_level") or x.get("risk") or ""
                     s = f"{outn} → {inn}"
-                    if why: s += f": {why}"
+                    if whyx: s += f": {whyx}"
                     if ri:  s += f" (risk {ri})"
                     transfer_reasons.append(s)
                 else:
                     transfer_reasons.append(str(x))
 
-        # rich analysis fields
         strategy_summary        = dec.get("strategy_summary")
         budget_optimization     = dec.get("budget_optimization")
         fixture_leverage        = dec.get("fixture_leverage")
@@ -1051,17 +1102,21 @@ def run_ai_auto_until_current(
         model_final_bank        = dec.get("final_bank")
         budget_efficiency_score = dec.get("budget_efficiency_score")
 
-        # coerce model_final_bank if possible (store both declared & computed)
-        try:
-            model_final_bank = float(model_final_bank)
-        except Exception:
-            model_final_bank = None
+        def _to_float(x):
+            try:
+                return float(x)
+            except Exception:
+                return None
 
         entry = {
             "schema_version": "v2",
             "gw": int(gw),
-            "made": bool(t_count > 0),
-            "transfers": [{"out_code": int(t["out_code"]), "in_code": int(t["in_code"])} for t in transfers],
+            "made": bool(len(transfers) > 0 or bool(wildcard_new)),
+            "transfers": (
+                _pair_transfers_for_log(state["checkpoints"][str(int(gw))]["squad"], state["squad"])
+                if wildcard_new else
+                [{"out_code": int(t["out_code"]), "in_code": int(t["in_code"])} for t in transfers]
+            ),
             "points_hit": int(points_hit),
             "chip": chip,
             "xi_codes": xi_codes,
@@ -1069,16 +1124,14 @@ def run_ai_auto_until_current(
             "captain_code": cap_code,
             "vice_captain_code": vice_code,
             "points": int(pts),
-            "bank": float(state["bank"]),  # bank after applying transfers
+            "bank": float(state["bank"]),
             "free_transfers": int(state["free_transfers"]),
-            "squad_codes": list(map(int, state["squad"])),  # post-transfer 15
+            "squad_codes": list(map(int, state["squad"])),
 
-            # legacy + normalized
             "reason": reason,
             "bench_reason": bench_reason,
             "transfer_reasons": transfer_reasons,
 
-            # full analysis payload from model
             "strategy_summary": strategy_summary,
             "budget_optimization": budget_optimization,
             "fixture_leverage": fixture_leverage,
@@ -1091,10 +1144,14 @@ def run_ai_auto_until_current(
             "bench_strategy": bench_strategy,
             "key_risks": key_risks,
             "next_gw_setup": next_gw_setup,
-            "final_bank_model": model_final_bank,
+            "final_bank_model": _to_float(model_final_bank),
             "budget_efficiency_score": budget_efficiency_score,
 
-            # snapshots for UI
+            "hit_points_cost_model": _to_float(dec.get("hit_points_cost")),
+            "expected_points_gain_model": _to_float(dec.get("expected_points_gain")),
+            "net_gain_estimate_model": _to_float(dec.get("net_gain_estimate")),
+            "hit_rationale": dec.get("hit_rationale"),
+
             "snapshot_15": snap_after,
             "snapshot_xi": snap_xi,
             "snapshot_bench": snap_bench,
@@ -1105,6 +1162,15 @@ def run_ai_auto_until_current(
 
         save_state(user_id, state)
         append_gw_log(user_id, gw, entry)
+
+        # ---- FH reversion after logging ----
+        if chip == "FH":
+            cp = state.get("checkpoints", {}).get(str(int(gw)))
+            if cp:
+                state["squad"] = list(map(int, cp.get("squad", state["squad"])))
+                state["bank"] = float(cp.get("bank", state["bank"]))
+                state["free_transfers"] = int(cp.get("free_transfers", state.get("free_transfers", 0)))
+                save_state(user_id, state)
 
 def rewind_and_regenerate_current_gw(
     user_id: str,
@@ -1123,10 +1189,8 @@ def rewind_and_regenerate_current_gw(
     if not state.get("squad"):
         return False, "No squad."
 
-    # Restore pre-decision snapshot if allowed (deadline-aware)
     restored, why = _restore_checkpoint_if_allowed(state, int(gw_now), kb_meta)
 
-    # Remove in-memory log for gw_now (DB history is immutable)
     state["log"] = [e for e in state["log"] if int(e.get("gw", -1)) != int(gw_now)]
     state["last_gw_processed"] = int(gw_now) - 1
     save_state(user_id, state)
@@ -1141,6 +1205,7 @@ def rewind_and_regenerate_current_gw(
     return True, ("Regenerated." + (f" {why}" if restored else ""))
 
 # ---------- refresh points (robust codes→id) ----------
+
 def _best_code_to_id(
     players_df: pd.DataFrame | None,
     kb_meta: dict | None,
@@ -1153,7 +1218,6 @@ def _best_code_to_id(
     if players_df is not None and "code" in players_df.columns and "id" in players_df.columns:
         return {int(c): int(i) for c, i in zip(players_df["code"], players_df["id"])}
     return {}
-
 
 def refresh_logged_points(
     user_id: str,
@@ -1191,7 +1255,6 @@ def refresh_logged_points(
         eh    = data.get("entry_history", {}) or {}
         picks = data.get("picks", []) or []
 
-        # Sort by position 1..15 for bench order fidelity
         picks_sorted = sorted(picks, key=lambda p: int(p.get("position", 0)))
 
         xi_ids    = [p["element"] for p in picks_sorted if int(p.get("multiplier", 0)) > 0][:11]
@@ -1205,47 +1268,39 @@ def refresh_logged_points(
         chip_map = {
             "3xc": "TC", "triplecaptain": "TC",
             "bboost": "BB", "benchboost": "BB",
-            # freehit/wildcard are entry-level chips; keep as "NONE" for AI log consistency
         }
         chip = chip_map.get(chip_raw, "NONE")
 
-        # Core numbers from FPL (already include autosubs, captain, hits)
         entry["points"]     = int(eh.get("points",        entry.get("points", 0)))
         entry["points_hit"] = int(eh.get("event_transfers_cost", entry.get("points_hit", 0)))
         entry["chip"]       = chip
 
-        # New: ranks
         if eh.get("rank") is not None:
             entry["gw_rank"] = int(eh["rank"])
         if eh.get("overall_rank") is not None:
             entry["overall_rank"] = int(eh["overall_rank"])
 
-        # Nice-to-haves
         if eh.get("total_points") is not None:
             entry["total_points_cumulative"] = int(eh["total_points"])
         if eh.get("points_on_bench") is not None:
             entry["points_on_bench"] = int(eh["points_on_bench"])
         if eh.get("value") is not None:
-            # 'value' is tenths of a million (e.g., 1000 -> £100.0m)
             try:
                 entry["team_value"] = float(eh["value"]) / 10.0
             except Exception:
                 pass
 
-        # Bank in API is tenths of a million
         try:
             entry["bank"] = float(eh.get("bank", entry.get("bank", 0))) / 10.0
         except Exception:
             pass
 
-        # Convert IDs -> codes for our UI/log
         entry["xi_codes"]          = [ic(i) for i in xi_ids]
         entry["bench_codes"]       = [ic(i) for i in bench_ids]
         entry["squad_codes"]       = [ic(i) for i in squad_ids]
         entry["captain_code"]      = ic(cap_id)
         entry["vice_captain_code"] = ic(vice_id)
 
-        # Refresh snapshots the UI uses
         entry["snapshot_15"]    = _snapshot(players_df, entry["squad_codes"])  if players_df is not None else []
         entry["snapshot_xi"]    = _snapshot(players_df, entry["xi_codes"])     if players_df is not None else []
         entry["snapshot_bench"] = _snapshot(players_df, entry["bench_codes"])  if players_df is not None else []
@@ -1263,13 +1318,11 @@ def force_redraft_gw1(
     model_name: str,
     extra_instructions: str | None = None,
 ) -> Tuple[bool, str]:
-    
     """Re-draft a full legal 15 for GW1 using the LLM and replace state.squad (codes; no FT cost)."""
     if "auto_mgr" not in st.session_state:
         return False, "No state."
     state = st.session_state.auto_mgr
     budget = float(state.get("budget", 100.0))
-
 
     if not st.session_state.openai_key:
         return False, "no_api"
@@ -1286,7 +1339,6 @@ def force_redraft_gw1(
 
     codes = obj.get("squad_codes") or []
     if (not codes) and obj.get("squad_ids") and "id" in players_df.columns:
-
         _, id_to_code = _ensure_maps(players_df)
         codes = [int(id_to_code.get(int(i), -1)) for i in obj["squad_ids"]]
     ok, why = _validate_initial(players_df, codes, budget)
