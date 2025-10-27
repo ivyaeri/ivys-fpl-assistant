@@ -601,14 +601,14 @@ def _llm(model_name: str = "gpt-4o-mini") -> ChatOpenAI:
     # Models that typically lock temperature (omit temp entirely)
     locked = re.compile(r"^(gpt-5|gpt-4\.1|gpt-4o-reasoning|o[34])", re.I).match(model_name)
     if locked:
-        return _mk()
+        return _mk(temperature=1)
 
     # Otherwise try a gentle temp, with fallback
     try:
         return _mk(temperature=0.2)
     except Exception as e:
         if "temperature" in str(e).lower() and ("unsupported" in str(e).lower() or "does not support" in str(e).lower()):
-            return _mk()
+            return _mk(temperature=1)
         raise
 
 # ---------- prompts (return CODES) ----------
