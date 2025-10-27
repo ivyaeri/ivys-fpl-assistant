@@ -466,6 +466,81 @@ def _validate_transfers(
 
     return True, "Applied.", float(new_bank), list(new_squad)
 
+# ---------- NEW: order-agnostic transfer applier (fixes Over budget due to sequence) ----------
+
+def _apply_transfers_in_any_order(
+    players_df: pd.DataFrame,
+    squad_codes: List[int],
+    bank: float,
+    transfers: List[dict],
+) -> Tuple[bool, str, float, List[int]]:
+    """
+    Try to apply a batch of like-for-like transfers in ANY order that fits the bank.
+    Greedy loop: at each step, pick any affordable transfer; apply; continue.
+    If none are affordable at a step, return Over budget with a helpful message.
+    """
+    if not transfers:
+        return True, "Hold.", float(bank), list(squad_codes))
+
+    pending = []
+    for t in transfers:
+        try:
+            pending.append({"out_code": int(t["out_code"]), "in_code": int(t["in_code"])})
+        except Exception:
+            return False, "Bad transfer codes.", float(bank), list(squad_codes)
+
+    new_bank = float(bank)
+    new_squad = list(map(int, squad_codes))
+    applied = []
+
+    while pending:
+        progress = False
+        for idx, t in enumerate(list(pending)):
+            out_code = int(t["out_code"]); in_code = int(t["in_code"])
+
+            if out_code not in new_squad:
+                return False, f"Out code {out_code} not in current squad.", bank, squad_codes
+            if in_code in new_squad:
+                return False, f"In code {in_code} already in squad.", bank, squad_codes
+
+            out = players_df.loc[players_df["code"] == out_code]
+            inn = players_df.loc[players_df["code"] == in_code]
+            if out.empty or inn.empty:
+                return False, "Unknown code(s).", bank, squad_codes
+            if out.iloc[0]["pos"] != inn.iloc[0]["pos"]:
+                return False, "Must be like-for-like.", bank, squad_codes
+
+            candidate = [c for c in new_squad if c != out_code] + [in_code]
+            tmp = players_df[players_df["code"].isin(candidate)]
+            if tmp["team_short"].value_counts().max() > MAX_PER_CLUB:
+                # can't apply this one now; try others
+                continue
+
+            delta = float(inn.iloc[0]["price"]) - float(out.iloc[0]["price"])
+            if delta <= new_bank + 1e-6:
+                # affordable now → apply
+                new_bank -= float(delta)
+                new_squad = candidate
+                applied.append(t)
+                pending.pop(idx)
+                progress = True
+                break
+
+        if not progress:
+            # Build a helpful message for remaining pending
+            details = []
+            for t in pending:
+                oc, ic = int(t["out_code"]), int(t["in_code"])
+                p_out = players_df.loc[players_df["code"] == oc]
+                p_in  = players_df.loc[players_df["code"] == ic]
+                if not p_out.empty and not p_in.empty:
+                    need = float(p_in["price"].iloc[0]) - float(p_out["price"].iloc[0])
+                    details.append(f"{oc}→{ic} needs £{need:.1f}m; bank £{new_bank:.1f}m")
+            msg = "Over budget. Unable to find an affordable order. " + (" | ".join(details) if details else "")
+            return False, msg, float(bank), list(squad_codes)
+
+    return True, "Applied.", float(new_bank), list(new_squad)
+
 # ---------- scoring (codes → id for API) ----------
 
 @lru_cache(maxsize=2048)
@@ -526,14 +601,14 @@ def _llm(model_name: str = "gpt-4o-mini") -> ChatOpenAI:
     # Models that typically lock temperature (omit temp entirely)
     locked = re.compile(r"^(gpt-5|gpt-4\.1|gpt-4o-reasoning|o[34])", re.I).match(model_name)
     if locked:
-        return _mk(temperature=1)
+        return _mk()
 
     # Otherwise try a gentle temp, with fallback
     try:
         return _mk(temperature=0.2)
     except Exception as e:
         if "temperature" in str(e).lower() and ("unsupported" in str(e).lower() or "does not support" in str(e).lower()):
-            return _mk(temperature=1)
+            return _mk()
         raise
 
 # ---------- prompts (return CODES) ----------
@@ -687,6 +762,7 @@ Bank: £{state['bank']:.1f}m | Free Transfers: {free_transfers} | Chips Availabl
 - Each transfer beyond the available Free Transfers costs {hit_cost} points.
 - Only take hits when the expected net gain (points gained minus hit cost) is positive and meaningful (≥ 2–3 pts).
 - Respect a hard cap if set: max_hit = {max_hit} points this GW.
+- **Sequence transfers so the bank never goes negative when applying them; apply cash-generating swaps before purchases.**
 
 **CHIP RULES:**
 - "NONE": normal transfers; hits apply.
@@ -986,7 +1062,8 @@ def run_ai_auto_until_current(
             new_squad = list(map(int, wildcard_new))
             new_bank  = float(_team_value(players_df, state["squad"]) + state["bank"] - _team_value(players_df, new_squad))
         else:
-            ok, msg, new_bank, new_squad = _validate_transfers(
+            # ORDER-AGNOSTIC apply (sell first if needed)
+            ok, msg, new_bank, new_squad = _apply_transfers_in_any_order(
                 players_df, state["squad"], state["bank"], transfers
             )
 
@@ -1011,8 +1088,8 @@ def run_ai_auto_until_current(
                 original = list(transfers)
                 while transfers and _hit_points(len(transfers)) > max_hit:
                     transfers.pop()
-                # re-apply transfers after trimming to recompute bank/squad
-                ok, msg, new_bank, new_squad = _validate_transfers(
+                # re-apply transfers after trimming to recompute bank/squad (order-agnostic)
+                ok, msg, new_bank, new_squad = _apply_transfers_in_any_order(
                     players_df, state["squad"], state["bank"], transfers
                 )
                 points_hit = _hit_points(len(transfers))
@@ -1061,7 +1138,8 @@ def run_ai_auto_until_current(
                 state["chips"]["WC2"] = False
 
         # ---- Points (FH/WC already set to no hit above) ----
-        pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id) - points_hit
+        code_to_id_eff = code_to_id
+        pts = _compute_points(xi_codes, cap_code, bench_codes, gw, chip, code_to_id_eff) - points_hit
 
         # snapshots for UI
         snap_after  = _snapshot(players_df, state["squad"])
