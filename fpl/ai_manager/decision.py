@@ -480,7 +480,7 @@ def _apply_transfers_in_any_order(
     If none are affordable at a step, return Over budget with a helpful message.
     """
     if not transfers:
-        return True, "Hold.", float(bank), list(squad_codes))
+        return True, "Hold.", float(bank), list(squad_codes)
 
     pending = []
     for t in transfers:
