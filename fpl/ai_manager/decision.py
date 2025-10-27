@@ -462,16 +462,42 @@ def _compute_points(
         total += sum(_event_points(int(c), gw, code_to_id) for c in bench_codes)
     return int(total)
 
-def _llm(model_name: str) -> ChatOpenAI:
+def _llm(model_name: str = "gpt-4o-mini") -> ChatOpenAI:
     """
-    Compatible ChatOpenAI init for newer and older langchain_openai versions.
+    Universal ChatOpenAI loader compatible with all current and future GPT models.
+    Automatically adjusts temperature and API args depending on model capabilities.
     """
+    import re
+    from langchain_openai import ChatOpenAI
+
+    api_key = getattr(st.session_state, "openai_key", None)
+    if not api_key:
+        raise RuntimeError("Missing OpenAI API key in st.session_state.openai_key")
+
+    # Models that disallow custom temperature (locked to 1)
+    locked_temp_pattern = re.compile(
+        r"^(gpt-5|gpt-4\.1|gpt-4o-reasoning|o[34])", re.IGNORECASE
+    )
+
+    def _make_client(**kwargs):
+        """LangChain version–safe constructor."""
+        try:
+            return ChatOpenAI(model=model_name, api_key=api_key, **kwargs)
+        except TypeError:
+            return ChatOpenAI(model_name=model_name, openai_api_key=api_key, **kwargs)
+
+    # ✅ If it's a reasoning or gpt-5 model, omit temperature
+    if locked_temp_pattern.match(model_name):
+        return _make_client()
+
+    # ✅ Otherwise, allow light randomness for diversity
     try:
-        # Newer versions
-        return ChatOpenAI(model=model_name, api_key=st.session_state.openai_key, temperature=0.2)
-    except TypeError:
-        # Older versions
-        return ChatOpenAI(model_name=model_name, openai_api_key=st.session_state.openai_key, temperature=0.2)
+        return _make_client(temperature=0.2)
+    except Exception as e:
+        if "temperature" in str(e).lower() and "unsupported" in str(e).lower():
+            return _make_client()  # retry without temp
+        raise
+
 
 # ---------- prompts (return CODES) ----------
 def draft_initial_squad(
