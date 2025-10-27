@@ -176,9 +176,11 @@ def _canonicalize_entry(entry: dict, i2c: dict) -> dict:
     e["bench_reason"] = bench_reason
     e["transfer_reasons"] = transfer_reasons
 
-    # 6) chip normalization
+    # 6) chip normalization (now also accepts plain "WC")
     chip = (e.get("chip") or "NONE").upper()
-    e["chip"] = chip if chip in ("NONE", "TC", "BB", "FH", "WC1", "WC2") else "NONE"
+    if chip not in ("NONE", "TC", "BB", "FH", "WC", "WC1", "WC2"):
+        chip = "NONE"
+    e["chip"] = chip
 
     # 7) numeric hygiene
     try: e["points_hit"] = int(e.get("points_hit", 0))
@@ -189,20 +191,21 @@ def _canonicalize_entry(entry: dict, i2c: dict) -> dict:
     except Exception: pass
     try: e["bank"] = float(e.get("bank", 0.0))
     except Exception: pass
-    try:
-        if e.get("final_bank_model") is not None:
-            e["final_bank_model"] = float(e.get("final_bank_model"))
-        elif e.get("final_bank") is not None:
-            e["final_bank_model"] = float(e.get("final_bank"))
-    except Exception:
-        pass
+
+    # model-declared bank / gains (optional fields from engine)
+    for fld in ["final_bank_model", "hit_points_cost_model", "expected_points_gain_model", "net_gain_estimate_model"]:
+        if fld in e and e[fld] is not None:
+            try:
+                e[fld] = float(e[fld])
+            except Exception:
+                e[fld] = None
 
     # copy through analysis fields if present
     for k in [
         "schema_version","strategy_summary","budget_optimization","fixture_leverage",
         "form_rationale","differentials","template_stance","transfer_breakdown",
         "xi_justification","captain_logic","bench_strategy","key_risks",
-        "next_gw_setup","budget_efficiency_score"
+        "next_gw_setup","budget_efficiency_score","hit_rationale"
     ]:
         if k in e:
             e[k] = e[k]
@@ -213,6 +216,26 @@ def _canonicalize_entry(entry: dict, i2c: dict) -> dict:
             e[k] = e[k]
 
     return e
+
+def _chip_badge(chip: str) -> str:
+    chip = (chip or "NONE").upper()
+    mapping = {
+        "NONE": "",
+        "TC": "🎯 TC",
+        "BB": "🧱 BB",
+        "FH": "🎩 Free Hit",
+        "WC": "🃏 Wildcard",
+        "WC1": "🃏 Wildcard 1",
+        "WC2": "🃏 Wildcard 2",
+    }
+    return mapping.get(chip, chip)
+
+def _heuristic_wc_redraft(entry: dict) -> bool:
+    """Heuristic: if WC chip and 10+ ins/outs, likely a full redraft."""
+    if (entry.get("chip") or "").upper() not in ("WC", "WC1", "WC2"):
+        return False
+    moves = entry.get("transfers") or []
+    return len(moves) >= 10
 
 # ---------- main ----------
 def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
@@ -343,24 +366,38 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
     for raw_entry in sorted(logs, key=lambda x: x.get("gw", 0), reverse=True):
         entry = _canonicalize_entry(raw_entry, i2c)
 
+        # Header bits
+        chip = (entry.get("chip") or "NONE").upper()
+        chip_badge = _chip_badge(chip)
+        redraft_flag = _heuristic_wc_redraft(entry)
+
         header_bits = [
-        f"GW {entry.get('gw', '?')}",
-        f"Points: {entry.get('points', 0)}",
-        f"Bank £{float(entry.get('bank', 0.0)):.1f}",
-        f"FTs {int(entry.get('free_transfers', 0))}",
-        f"Hits {int(entry.get('points_hit', 0))}",
-    ]
+            f"GW {entry.get('gw', '?')}",
+            f"Points: {entry.get('points', 0)}",
+            f"Bank £{float(entry.get('bank', 0.0)):.1f}",
+            f"FTs {int(entry.get('free_transfers', 0))}",
+            f"Hits {int(entry.get('points_hit', 0))}",
+        ]
         if entry.get("gw_rank"):
             header_bits.append(f"GW rank {int(entry['gw_rank']):,}")
         if entry.get("overall_rank"):
             header_bits.append(f"OR {int(entry['overall_rank']):,}")
-        chip = (entry.get("chip") or "NONE").upper()
-        if chip != "NONE":
-            header_bits.append(f"Chip {chip}")
-        if entry.get("redraft"):
-            header_bits.append("Full redraft")
+        if chip_badge:
+            header_bits.append(chip_badge)
+        if redraft_flag:
+            header_bits.append("🧩 Full redraft")
 
         with st.expander(" — ".join(header_bits), expanded=(entry.get("gw") == gw_now)):
+            # Chip banners
+            if chip in ("FH",):
+                st.info("🎩 **Free Hit active** — unlimited transfers this GW, no hits; squad reverts after the GW.")
+            if chip in ("WC", "WC1", "WC2"):
+                st.success("🃏 **Wildcard active** — squad rebuilt; changes persist.")
+            if chip == "TC":
+                st.info("🎯 **Triple Captain active** — captain’s points are tripled.")
+            if chip == "BB":
+                st.info("🧱 **Bench Boost active** — bench points will count.")
+
             # ----- Metrics row (Captain + Vice added)
             cap_name  = _pname_by_code(players_df, entry.get("captain_code")) if entry.get("captain_code") else "—"
             vice_name = _pname_by_code(players_df, entry.get("vice_captain_code")) if entry.get("vice_captain_code") else "—"
@@ -370,12 +407,11 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             cols_meta[1].metric("Points hit", entry.get("points_hit", 0))
             cols_meta[2].metric("GW rank", f"{int(entry['gw_rank']):,}" if entry.get("gw_rank") else "—")
             cols_meta[3].metric("Overall rank", f"{int(entry['overall_rank']):,}" if entry.get("overall_rank") else "—")
-            cols_meta[4].metric("Vice captain",vice_name)
-            cols_meta[5].metric("Captain",cap_name)
+            cols_meta[4].metric("Vice captain", vice_name)
+            cols_meta[5].metric("Captain", cap_name)
 
-            # ----- Bank summary (engine vs model)
+            # ----- Bank summary (engine vs model + net gain)
             mfb = entry.get("final_bank_model", None)
-            cols_bank = st.columns(2)
             cols_bank = st.columns(3)
             cols_bank[0].markdown(f"**Engine bank (post-transfers):** £{float(entry.get('bank', 0.0)):.1f}m")
             if entry.get("total_points_cumulative") is not None:
@@ -383,13 +419,26 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
             if entry.get("team_value") is not None:
                 cols_bank[2].markdown(f"**Team value:** £{float(entry['team_value']):.1f}m")
             if mfb is not None:
-                cols_bank[1].markdown(f"**Model declared final_bank:** £{float(mfb):.1f}m")
+                st.caption(f"Model-declared final_bank: £{float(mfb):.1f}m")
                 try:
                     diff = float(entry.get("bank", 0.0)) - float(mfb)
                     if abs(diff) > 0.05:
                         st.warning(f"Bank mismatch vs model: {diff:+.2f}m (engine − model)")
                 except Exception:
                     pass
+
+            # ----- Hit & gain rationale (if model provided)
+            if any(entry.get(k) is not None for k in ["hit_points_cost_model","expected_points_gain_model","net_gain_estimate_model"]):
+                cols_hit = st.columns(3)
+                if entry.get("hit_points_cost_model") is not None:
+                    cols_hit[0].metric("Model hit cost", f"{int(entry['hit_points_cost_model'])}")
+                if entry.get("expected_points_gain_model") is not None:
+                    cols_hit[1].metric("Expected gain", f"{entry['expected_points_gain_model']:.1f}")
+                if entry.get("net_gain_estimate_model") is not None:
+                    val = entry["net_gain_estimate_model"]
+                    cols_hit[2].metric("Net gain est.", f"{val:+.1f}")
+                if entry.get("hit_rationale"):
+                    st.caption(f"Hit rationale: {entry['hit_rationale']}")
 
             # ----- Transfers (canonical codes)
             moves = entry.get("transfers") or []
@@ -410,6 +459,8 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
                 df_tb = df_tb[use_cols] if use_cols else df_tb
                 st.markdown("**Transfer breakdown (AI):**")
                 st.dataframe(df_tb, use_container_width=True)
+
+            # Bench order (names)
             bench_codes = entry.get("bench_codes") or []
             if bench_codes:
                 bench_names = [_pname_by_code(players_df, c) for c in bench_codes]
@@ -457,6 +508,7 @@ def render_ai_tab(players_df: pd.DataFrame, kb_meta: dict, user_id: str):
 
             # ----- XI/Bench/Squad (prefer embedded snapshots)
             xi_codes    = entry.get("xi_codes") or []
+            bench_codes = entry.get("bench_codes") or []
             cap_code    = int(entry.get("captain_code") or 0)
             vice_code   = int(entry.get("vice_captain_code") or 0)
 
