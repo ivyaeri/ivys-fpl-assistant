@@ -30,6 +30,7 @@ def _fetch_gw_points(gw: int, id_to_code: dict) -> dict[int, int]:
 
 def _recent_block(element_id: int, last_n: int = 5):
     """element_id is the season-specific FPL 'id' (NOT code)."""
+    last_n=15
     try:
         h = fetch_player_history(element_id)
         hist = h.get("history", [])[-last_n:]
@@ -49,6 +50,7 @@ def _recent_block(element_id: int, last_n: int = 5):
         return "RECENT: n/a"
 
 def build_full_kb(include_history: bool = True, last_n: int = 15):
+    last_n=15
     bs = fetch_bootstrap()
     fixtures = fetch_fixtures()
 
