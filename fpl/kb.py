@@ -48,7 +48,7 @@ def _recent_block(element_id: int, last_n: int = 5):
     except Exception:
         return "RECENT: n/a"
 
-def build_full_kb(include_history: bool = True, last_n: int = 5):
+def build_full_kb(include_history: bool = True, last_n: int = 15):
     bs = fetch_bootstrap()
     fixtures = fetch_fixtures()
 
